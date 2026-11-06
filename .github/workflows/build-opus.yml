@@ -37,6 +37,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Ghostscript powers Compress, Grayscale, Repair and PDF/A. It ships inside
+      # the installer so Opus works fully offline.
+      - name: Bundle Ghostscript
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $rel = gh release view -R ArtifexSoftware/ghostpdl-downloads --json tagName,assets | ConvertFrom-Json
+          $asset = $rel.assets | Where-Object { $_.name -match '^gs\d+w64\.exe$' } | Select-Object -First 1
+          if (-not $asset) { throw "No 64-bit Ghostscript installer in release $($rel.tagName)" }
+          Write-Host "Bundling $($asset.name) from $($rel.tagName)"
+          gh release download $rel.tagName -R ArtifexSoftware/ghostpdl-downloads -p $asset.name -O gs-setup.exe
+          Start-Process -FilePath .\gs-setup.exe -ArgumentList '/S','/D=C:\gs' -Wait
+          $dest = "src-tauri/resources/gs"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item C:\gs\bin\gswin64c.exe, C:\gs\bin\gsdll64.dll -Destination $dest
+          Get-ChildItem C:\gs -Recurse -Include "COPYING*","LICENSE*" | Select-Object -First 1 | Copy-Item -Destination "$dest/LICENSE-Ghostscript.txt"
+          & "$dest/gswin64c.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "Ghostscript failed to run" }
+
       - name: Run engine tests
         run: npm test
 

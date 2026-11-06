@@ -6,3 +6,4 @@ apps/*/src-tauri/gen/
 *.log
 .DS_Store
 Thumbs.db
+apps/*/src-tauri/resources/gs/

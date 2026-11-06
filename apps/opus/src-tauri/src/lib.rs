@@ -125,6 +125,134 @@ fn show_in_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Finds the bundled Ghostscript (Windows) or a system one (development).
+fn ghostscript_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if let Ok(res) = app.path().resource_dir() {
+        for name in ["gs/gswin64c.exe", "gs/bin/gswin64c.exe", "gs/gs"] {
+            let p = res.join(name);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    for name in ["gswin64c", "gs"] {
+        let probe = std::process::Command::new(name).arg("--version").output();
+        if probe.map(|o| o.status.success()).unwrap_or(false) {
+            return Some(PathBuf::from(name));
+        }
+    }
+    None
+}
+
+#[tauri::command(async)]
+fn has_ghostscript(app: tauri::AppHandle) -> bool {
+    ghostscript_path(&app).is_some()
+}
+
+/// Runs Ghostscript on a PDF (sent as the raw request body) and returns the result.
+/// The `x-args` header holds a URL-encoded JSON list of extra arguments.
+/// `{in}`, `{out}` and `{dir}` in arguments are replaced with temp paths.
+/// `x-files` may hold a JSON object of extra text files to write into `{dir}`.
+#[tauri::command(async)]
+fn run_ghostscript(app: tauri::AppHandle, request: Request<'_>) -> Result<Response, String> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("No file data received".into());
+    };
+    let header = |name: &str| -> Result<Option<String>, String> {
+        match request.headers().get(name) {
+            None => Ok(None),
+            Some(v) => {
+                let raw = v.to_str().map_err(|e| e.to_string())?;
+                Ok(Some(
+                    percent_encoding::percent_decode_str(raw)
+                        .decode_utf8()
+                        .map_err(|e| e.to_string())?
+                        .to_string(),
+                ))
+            }
+        }
+    };
+    let args: Vec<String> = serde_json::from_str(&header("x-args")?.unwrap_or_else(|| "[]".into()))
+        .map_err(|e| format!("Bad arguments: {e}"))?;
+    let files: std::collections::HashMap<String, String> =
+        serde_json::from_str(&header("x-files")?.unwrap_or_else(|| "{}".into()))
+            .map_err(|e| format!("Bad files: {e}"))?;
+
+    let gs = ghostscript_path(&app).ok_or("The PDF engine (Ghostscript) is missing. Reinstall Opus.")?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("opus-gs-{stamp}"));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let cleanup = |d: &Path| {
+        let _ = std::fs::remove_dir_all(d);
+    };
+    let input = dir.join("in.pdf");
+    let output = dir.join("out.pdf");
+    if let Err(e) = std::fs::write(&input, bytes) {
+        cleanup(&dir);
+        return Err(e.to_string());
+    }
+    // Ghostscript accepts forward slashes on Windows, and they need no escaping
+    // inside PostScript strings.
+    let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    let icc = app
+        .path()
+        .resource_dir()
+        .map(|r| r.join("srgb.icc"))
+        .ok()
+        .filter(|p| p.exists())
+        .or_else(|| {
+            let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/srgb.icc");
+            dev.exists().then_some(dev)
+        });
+    let icc_path = icc.as_deref().map(slash).unwrap_or_default();
+    let icc_dir = icc
+        .as_deref()
+        .and_then(Path::parent)
+        .map(|p| format!("{}/", slash(p)))
+        .unwrap_or_default();
+    let fix = |a: &str| {
+        a.replace("{in}", &slash(&input))
+            .replace("{out}", &slash(&output))
+            .replace("{dir}", &slash(&dir))
+            .replace("{icc}", &icc_path)
+            .replace("{iccdir}", &icc_dir)
+    };
+    for (name, content) in &files {
+        // Only plain file names, never paths.
+        if name.contains(['/', '\\']) || name.contains("..") {
+            cleanup(&dir);
+            return Err("Bad file name".into());
+        }
+        let _ = std::fs::write(dir.join(name), fix(content));
+    }
+    let mut cmd = std::process::Command::new(&gs);
+    cmd.current_dir(&dir)
+        .args(["-dSAFER", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=pdfwrite"])
+        .args(args.iter().map(|a| fix(a)))
+        .arg(format!("-sOutputFile={}", slash(&output)));
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no black console flash
+    }
+    // Input file goes last.
+    cmd.arg(&input);
+    let result = cmd.output();
+    let out = match result {
+        Ok(o) if o.status.success() && output.exists() => std::fs::read(&output).map_err(|e| e.to_string()),
+        Ok(o) => {
+            let msg = String::from_utf8_lossy(&o.stderr).lines().take(4).collect::<Vec<_>>().join(" ");
+            Err(format!("The PDF engine could not process this file. {msg}"))
+        }
+        Err(e) => Err(format!("Could not start the PDF engine: {e}")),
+    };
+    cleanup(&dir);
+    out.map(Response::new)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -146,7 +274,9 @@ pub fn run() {
             write_file,
             unique_path,
             startup_files,
-            show_in_folder
+            show_in_folder,
+            has_ghostscript,
+            run_ghostscript
         ])
         .run(tauri::generate_context!())
         .expect("error while running Opus");

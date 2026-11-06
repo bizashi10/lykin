@@ -4,6 +4,8 @@ import {
   loadSource, pagesOf, buildPdf, parseRanges, chunkPages, baseName,
   PasswordRequiredError, NotAPdfError, extrasLostBy, type Source,
 } from "../src/lib/pdfops.ts";
+import * as T from "../src/lib/tools.ts";
+import { TOOLS, matchTool, suggestFor } from "../src/tools/registry.ts";
 
 let passed = 0;
 let failed = 0;
@@ -264,6 +266,88 @@ await test("truncated PDF gives a friendly message", async () => {
   try { await loadSource(A.slice(0, Math.floor(A.length / 2)), "t.pdf"); }
   catch (e) { assert(e instanceof NotAPdfError && /damaged|incomplete|not a valid/i.test((e as Error).message), String(e)); return; }
   // pdf-lib may recover a half file; that's acceptable too
+});
+
+// ---------- stage 1 tools ----------
+const ROT = await (async () => {
+  const d = await PDFDocument.create();
+  for (const r of [0, 90, 180, 270]) d.addPage([600, 800]).setRotation(degrees(r));
+  return d.save();
+})();
+
+await test("page numbers on rotated pages stay upright and in place", async () => {
+  const out = await T.addPageNumbers(ROT, { position: "bottom-right", format: "Page {n} of {total}", start: 1, size: 12, marginMm: 10, color: "#000000", pages: "all", font: "sans" });
+  const d = await PDFDocument.load(out);
+  eq(d.getPageCount(), 4);
+  eq(d.getPages().map((p) => p.getRotation().angle), [0, 90, 180, 270]);
+});
+
+await test("page numbers skip first + start number", async () => {
+  const out = await T.addPageNumbers(A, { position: "top-center", format: "{n}/{total}", start: 5, size: 10, marginMm: 8, color: "#ff0000", pages: "skip-first", font: "serif" });
+  eq((await PDFDocument.load(out)).getPageCount(), 3);
+});
+
+await test("page numbers with non-Latin text don't crash", async () => {
+  await T.addPageNumbers(A, { position: "bottom-left", format: "Страница {n} 页", start: 1, size: 10, marginMm: 8, color: "#000000", pages: "all", font: "sans" });
+});
+
+await test("watermark text: center, tile, corner", async () => {
+  for (const layout of ["center", "tile", "top-left"] as const) {
+    const out = await T.addWatermark(ROT, { kind: "text", text: "DRAFT", imageScale: 0.3, size: 50, color: "#ff0000", opacity: 0.3, angle: 45, layout, pages: "all", bold: true });
+    eq((await PDFDocument.load(out)).getPageCount(), 4);
+  }
+});
+
+await test("watermark image requires an image", async () => {
+  let threw = false;
+  try { await T.addWatermark(A, { kind: "image", text: "", imageScale: 0.3, size: 50, color: "#000000", opacity: 0.3, angle: 0, layout: "center", pages: "all", bold: false }); } catch { threw = true; }
+  assert(threw);
+});
+
+await test("crop on rotated pages trims the visual top", async () => {
+  const out = await T.cropPages(ROT, { top: 20, right: 0, bottom: 0, left: 0, pages: "all" });
+  const d = await PDFDocument.load(out);
+  const boxes = d.getPages().map((p) => { const b = p.getCropBox(); return [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)]; });
+  eq(boxes, [[0, 0, 600, 743], [57, 0, 543, 800], [0, 57, 600, 743], [0, 0, 543, 800]]);
+});
+
+await test("crop rejects margins larger than the page", async () => {
+  let threw = false;
+  try { await T.cropPages(A, { top: 500, right: 0, bottom: 500, left: 0, pages: "all" }); } catch { threw = true; }
+  assert(threw);
+});
+
+await test("images to PDF (fit, A4 auto orientation, margins)", async () => {
+  const src = await PDFDocument.create();
+  // Tiny 2x1 PNG
+  const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAEElEQVR4nGP4z8DAwMDAAAAOAAHn1n6qAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
+  void src;
+  const fit = await T.imagesToPdf([{ bytes: png, type: "png", width: 2, height: 1 }], { pageSize: "fit", orientation: "auto", marginMm: 0 });
+  const a4 = await T.imagesToPdf([{ bytes: png, type: "png", width: 2, height: 1 }, { bytes: png, type: "png", width: 2, height: 1 }], { pageSize: "a4", orientation: "auto", marginMm: 10 });
+  const d = await PDFDocument.load(a4);
+  eq(d.getPageCount(), 2);
+  const s = d.getPage(0).getSize();
+  assert(s.width > s.height, "wide image should give landscape A4");
+  eq((await PDFDocument.load(fit)).getPageCount(), 1);
+});
+
+await test("blank pages, reverse, properties, flatten", async () => {
+  eq((await PDFDocument.load(await T.insertBlank(A, "between"))).getPageCount(), 5);
+  eq((await PDFDocument.load(await T.insertBlank(A, "start"))).getPageCount(), 4);
+  eq(await widths(await T.reversePages(A)), [303, 302, 301]);
+  const info = await T.readInfo(await T.writeInfo(A, { title: "Wolf", author: "Pack", subject: "S", keywords: "a, b" }));
+  eq([info.title, info.author], ["Wolf", "Pack"]);
+  let threw = false;
+  try { await T.flattenForms(A); } catch { threw = true; }
+  assert(threw, "flatten with no fields should explain");
+});
+
+await test("tool registry: search and smart suggestions", () => {
+  assert(TOOLS.length >= 25);
+  assert(new Set(TOOLS.map((t) => t.id)).size === TOOLS.length, "duplicate tool ids");
+  assert(matchTool(TOOLS.find((t) => t.id === "compress")!, "shrink") > 0);
+  eq(suggestFor([{ name: "a.jpg" }]).map((t) => t.id), ["image-to-pdf"]);
+  eq(suggestFor([{ name: "a.pdf" }, { name: "b.pdf" }])[0].id, "merge");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

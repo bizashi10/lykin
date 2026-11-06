@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildPdf, loadSource, extrasLostBy, pagesOf, parseRanges, chunkPages, baseName, describeGroup, normalizeRotation,
-  PasswordRequiredError, type PageRef, type Source,
+  PasswordRequiredError, NotAPdfError, type PageRef, type Source,
 } from "./lib/pdfops";
+import { Home } from "./components/Home";
+import { ToolRunner, type LoadedPdf } from "./components/ToolRunner";
+import { TOOLS, type ToolDef } from "./tools/registry";
+import { addRecent, forgetRecent, loadRecents, loadTheme, saveTheme, type Recent, type Theme } from "./lib/recents";
+import { hasEngine } from "./lib/native";
+import { isImageName } from "./lib/images";
 import { useHistory } from "./lib/history";
 import * as platform from "./lib/platform";
 import { pageText, closeSource } from "./lib/render";
@@ -22,6 +28,7 @@ interface Meta {
   path?: string;
 }
 type View = "read" | "organize";
+type Screen = { kind: "home" } | { kind: "tool"; tool: ToolDef; files: platform.PickedFile[]; key: number } | { kind: "editor" };
 type Dialog =
   | { kind: "password"; fileName: string; wrong: boolean; resolve: (pw: string | null) => void }
   | { kind: "protect" }
@@ -62,6 +69,32 @@ export default function App() {
   const [findHits, setFindHits] = useState<number[] | null>(null);
   const [findPos, setFindPos] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [screen, setScreen] = useState<Screen>({ kind: "home" });
+  const [dropped, setDropped] = useState<platform.PickedFile[] | null>(null);
+  const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
+  const [theme, setTheme] = useState<Theme>(() => loadTheme());
+  const [engineReady, setEngineReady] = useState(false);
+  useEffect(() => {
+    hasEngine().then(setEngineReady);
+  }, []);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      const resolved = theme === "system" ? (media.matches ? "light" : "dark") : theme;
+      document.documentElement.dataset.theme = resolved;
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [theme]);
+  const cycleTheme = () => {
+    const next: Theme = theme === "system" ? "dark" : theme === "dark" ? "light" : "system";
+    setTheme(next);
+    saveTheme(next);
+  };
+  const remember = (path: string | undefined, name: string) => {
+    if (path && platform.isDesktop) setRecents(addRecent(path, name));
+  };
 
   const hasDoc = meta !== null && doc.pages.length > 0;
   const dirty = hasDoc && doc !== savedDoc.current;
@@ -98,8 +131,9 @@ export default function App() {
 
   /** Loads files, asking for passwords when needed. Skips files that fail. */
   const loadPicked = useCallback(
-    async (picked: platform.PickedFile[]) => {
+    async (picked: platform.PickedFile[], opts: { lenient?: boolean } = {}) => {
       const loaded: { source: Source; password?: string; file: platform.PickedFile }[] = [];
+      const failed: { file: platform.PickedFile; failed: true }[] = [];
       for (const file of picked) {
         let password: string | undefined;
         for (;;) {
@@ -117,7 +151,8 @@ export default function App() {
               password = pw;
               continue;
             }
-            toast(`${file.name}: ${(err as Error).message}`, "error");
+            if (opts.lenient && err instanceof NotAPdfError) failed.push({ file, failed: true });
+            else toast(`${file.name}: ${(err as Error).message}`, "error");
             break;
           }
         }
@@ -136,9 +171,14 @@ export default function App() {
           return next;
         });
       }
-      return loaded;
+      return opts.lenient ? [...loaded, ...failed] : loaded;
     },
     [toast],
+  );
+  const loadForTool = useCallback(
+    (files: platform.PickedFile[], opts?: { lenient?: boolean }) =>
+      loadPicked(files, opts) as Promise<(LoadedPdf | { file: platform.PickedFile; failed: true })[]>,
+    [loadPicked],
   );
 
   const confirmDiscard = useCallback(async () => {
@@ -162,10 +202,13 @@ export default function App() {
     async (picked: platform.PickedFile[]) => {
       if (!picked.length) return;
       if (!(await confirmDiscard())) return;
-      const loaded = await loadPicked(picked);
+      const loaded = (await loadPicked(picked)) as { source: Source; password?: string; file: platform.PickedFile }[];
       if (!loaded.length) return;
       const pages = loaded.flatMap((l) => pagesOf(l.source));
       const single = loaded.length === 1;
+      setScreen({ kind: "editor" });
+      setDropped(null);
+      loaded.forEach((l) => remember(l.file.path, l.file.name));
       const next: Doc = { pages, password: single ? (loaded[0].password ?? null) : null };
       history.reset(next);
       savedDoc.current = single ? next : EMPTY; // a fresh merge counts as unsaved
@@ -174,6 +217,7 @@ export default function App() {
       setCurrent(0);
       setJumpSignal((n) => n + 1);
       setFindHits(null);
+      if (single) setView("read");
       if (!single) {
         setView("organize");
         toast(`Merged ${loaded.length} files (${pages.length} pages). Drag pages to reorder, then save.`, "success");
@@ -198,7 +242,7 @@ export default function App() {
     async (picked: platform.PickedFile[], at?: number) => {
       if (!picked.length) return;
       if (!hasDoc) return openFiles(picked);
-      const loaded = await loadPicked(picked);
+      const loaded = (await loadPicked(picked)) as { source: Source; password?: string; file: platform.PickedFile }[];
       if (!loaded.length) return;
       const added = loaded.flatMap((l) => pagesOf(l.source));
       let index = at;
@@ -231,6 +275,7 @@ export default function App() {
         if (!target) return;
         savedDoc.current = snapshot;
         setMeta({ name: platform.fileNameOf(target), path: platform.isDesktop ? target : undefined });
+        remember(platform.isDesktop ? target : undefined, platform.fileNameOf(target));
         toast(`Saved ${platform.fileNameOf(target)}${snapshot.password ? " (password-protected)" : ""}`, "success");
       });
     },
@@ -343,6 +388,7 @@ export default function App() {
     setSelected(new Set());
     setFindHits(null);
     setFindOpen(false);
+    setScreen({ kind: "home" });
   }, [confirmDiscard, history]);
 
   // ---------- zoom ----------
@@ -405,7 +451,23 @@ export default function App() {
   };
 
   // ---------- commands ----------
+  const openTool = (tool: ToolDef, files: platform.PickedFile[] = []) => {
+    if (tool.soon) return;
+    if (tool.mode === "editor") {
+      if (files.length) openFiles(files.slice(0, 1)).then(() => setView("organize"));
+      else if (hasDoc) { setScreen({ kind: "editor" }); setView("organize"); }
+      else platform.pickPdfs(false).then((p) => { if (p.length) openFiles(p).then(() => setView("organize")); });
+      return;
+    }
+    setDropped(null);
+    setScreen({ kind: "tool", tool, files, key: Date.now() });
+  };
+  const toolCommands: Command[] = TOOLS.filter((t) => !t.soon).map((t) => ({
+    id: `tool-${t.id}`, title: t.name, keywords: `tool ${t.keywords ?? ""} ${t.blurb}`, run: () => openTool(t),
+  }));
   const commands: Command[] = [
+    { id: "home", title: "Home — all tools", keywords: "start tools menu", run: () => setScreen({ kind: "home" }) },
+    { id: "theme", title: `Theme: switch to ${theme === "system" ? "dark" : theme === "dark" ? "light" : "system"}`, keywords: "dark light mode appearance", run: cycleTheme },
     { id: "open", title: "Open PDF…", shortcut: "Ctrl+O", keywords: "file load", run: openDialog },
     { id: "merge", title: "Merge PDFs into a new file…", keywords: "combine join several", run: mergeDialog },
     { id: "add", title: "Add pages from another PDF…", keywords: "insert merge append combine", enabled: hasDoc, run: addDialog },
@@ -440,6 +502,7 @@ export default function App() {
     { id: "z100", title: "Actual size (100%)", keywords: "zoom", enabled: hasDoc, run: () => { setView("read"); setZoom(1); } },
     { id: "thumbs", title: showThumbs ? "Hide page sidebar" : "Show page sidebar", keywords: "thumbnails", enabled: hasDoc, run: () => setShowThumbs((s) => !s) },
     { id: "close", title: "Close document", shortcut: "Ctrl+W", enabled: hasDoc, run: closeDoc },
+    ...toolCommands,
   ];
   const commandsRef = useRef(commands);
   commandsRef.current = commands;
@@ -476,6 +539,10 @@ export default function App() {
       };
       if (ctrl && k === "k") { e.preventDefault(); setCommandOpen((o) => !o); return; }
       if (dialogRef.current || commandOpenRef.current) return;
+      if (screenRef.current.kind !== "editor") {
+        if (ctrl && k === "o") return run("open");
+        return;
+      }
       if (ctrl && k === "o") return run("open");
       if (ctrl && k === "s") return run(e.shiftKey ? "saveas" : "save");
       if (ctrl && k === "w") return run("close");
@@ -510,6 +577,8 @@ export default function App() {
   commandOpenRef.current = commandOpen;
   const viewRef = useRef(view);
   viewRef.current = view;
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
 
   // ---------- desktop integration ----------
   const openFilesRef = useRef(openFiles);
@@ -554,6 +623,12 @@ export default function App() {
   const onWindowDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
+    if (screen.kind === "home") {
+      const usable = Array.from(e.dataTransfer.files).filter((f) => /\.pdf$/i.test(f.name) || isImageName(f.name));
+      if (!usable.length) return toast("Opus works with PDFs and images", "error");
+      setDropped(await Promise.all(usable.map(platform.fromBrowserFile)));
+      return;
+    }
     const files = Array.from(e.dataTransfer.files).filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
     if (!files.length) {
       if (e.dataTransfer.files.length) toast("Only PDF files can be opened here", "error");
@@ -571,23 +646,83 @@ export default function App() {
 
   return (
     <div
-      className={`app ${dragOver ? "drag-over" : ""}`}
+      className={`app shell ${dragOver ? "drag-over" : ""}`}
       onDragOver={(e) => {
+        if (screen.kind === "tool") return; // the tool screen handles its own drops
         if (Array.from(e.dataTransfer.types).includes("Files")) {
           e.preventDefault();
-          if (view !== "organize" || !hasDoc) setDragOver(true);
+          if (screen.kind === "home" || view !== "organize" || !hasDoc) setDragOver(true);
         }
       }}
       onDragLeave={(e) => {
         if (e.currentTarget === e.target || !e.relatedTarget) setDragOver(false);
       }}
-      onDrop={onWindowDrop}
+      onDrop={(e) => {
+        if (screen.kind === "tool") return;
+        onWindowDrop(e);
+      }}
     >
+      <nav className="rail" aria-label="Main">
+        <div className="rail-brand" title="Opus — by Lykin"><span>O</span></div>
+        <button className={`rail-btn ${screen.kind === "home" || screen.kind === "tool" ? "on" : ""}`} onClick={() => setScreen({ kind: "home" })} title="All tools" aria-label="All tools">
+          <Icon name="tools" size={21} />
+          <span>Tools</span>
+        </button>
+        <button className={`rail-btn ${screen.kind === "editor" ? "on" : ""}`} onClick={() => (hasDoc ? setScreen({ kind: "editor" }) : openDialog())} title={hasDoc ? `Editor — ${meta?.name}` : "Open a PDF in the editor"} aria-label="Editor">
+          <Icon name="read" size={21} />
+          <span>Editor</span>
+          {hasDoc && <i className={`rail-dot ${dirty ? "dirty" : ""}`} />}
+        </button>
+        <span className="spacer" />
+        <button className="rail-btn" onClick={() => setCommandOpen(true)} title="Command bar (Ctrl+K)" aria-label="Command bar">
+          <Icon name="command" size={20} />
+          <span>Ctrl K</span>
+        </button>
+        <button className="rail-btn" onClick={cycleTheme} title={`Theme: ${theme}`} aria-label={`Theme: ${theme}`}>
+          <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "monitor"} size={20} />
+          <span>{theme === "system" ? "Auto" : theme === "dark" ? "Dark" : "Light"}</span>
+        </button>
+      </nav>
+
+      <div className="stage">
+      {screen.kind === "home" && (
+        <Home
+          onTool={(t, files) => openTool(t, files)}
+          onOpen={openDialog}
+          recents={recents}
+          onOpenRecent={async (r) => {
+            try {
+              await openFiles([await platform.readPath(r.path)]);
+            } catch {
+              toast(`${r.name} was moved or deleted`, "error");
+              setRecents(forgetRecent(r.path));
+            }
+          }}
+          onForgetRecent={(r) => setRecents(forgetRecent(r.path))}
+          dropped={dropped}
+          onClearDropped={() => setDropped(null)}
+          onOpenDropped={() => dropped && openFiles(dropped.slice(0, 1))}
+          openDoc={hasDoc && meta ? { name: meta.name } : null}
+          onResume={() => setScreen({ kind: "editor" })}
+        />
+      )}
+      {screen.kind === "tool" && (
+        <ToolRunner
+          key={screen.key}
+          tool={screen.tool}
+          initialFiles={screen.files}
+          loadPdfs={loadForTool}
+          engineReady={engineReady}
+          toast={toast}
+          onBack={() => setScreen({ kind: "home" })}
+          onOpenInEditor={async (o) => {
+            await openFiles([{ name: o.name, bytes: o.bytes }]);
+          }}
+        />
+      )}
+      {screen.kind === "editor" && (
+      <div className="editor">
       <header className="toolbar">
-        <div className="brand" title="Opus — by Lykin">
-          <span className="brand-mark">O</span>
-          <span className="brand-name">Opus</span>
-        </div>
         <div className="tool-group">
           <button onClick={openDialog} title="Open (Ctrl+O)"><Icon name="open" /><span>Open</span></button>
           <button onClick={hasDoc ? addDialog : mergeDialog} title={hasDoc ? "Add pages from other PDFs" : "Merge several PDFs"}>
@@ -718,10 +853,13 @@ export default function App() {
           )}
         </footer>
       )}
+      </div>
+      )}
+      </div>
 
       {dragOver && (
         <div className="drop-hint">
-          <div>{hasDoc ? "Drop PDFs to add their pages" : "Drop PDFs to open"}</div>
+          <div>{screen.kind === "home" ? "Drop PDFs or images — Opus will suggest what to do" : hasDoc ? "Drop PDFs to add their pages" : "Drop PDFs to open"}</div>
         </div>
       )}
 
