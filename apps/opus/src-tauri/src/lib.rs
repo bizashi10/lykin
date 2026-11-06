@@ -1,12 +1,14 @@
 //! Opus backend: the small part of the app that touches the disk.
 //! All PDF work happens in the app itself; this only reads and writes files.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{Emitter, Manager};
 
 /// Reads a whole file and returns its raw bytes.
-#[tauri::command]
+/// (`async` keeps the window responsive while large files load.)
+#[tauri::command(async)]
 fn read_file(path: String) -> Result<Response, String> {
     std::fs::read(&path)
         .map(Response::new)
@@ -16,7 +18,7 @@ fn read_file(path: String) -> Result<Response, String> {
 /// Writes raw bytes to the path given in the `x-path` header.
 /// Writes to a temporary file first, then swaps it in, so a crash
 /// mid-save never leaves a half-written PDF behind.
-#[tauri::command]
+#[tauri::command(async)]
 fn write_file(request: Request<'_>) -> Result<(), String> {
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("No file data received".into());
@@ -32,12 +34,43 @@ fn write_file(request: Request<'_>) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .to_string();
     let target = PathBuf::from(&path);
-    let tmp = target.with_extension("opus-saving.tmp");
-    std::fs::write(&tmp, bytes).map_err(|e| format!("Could not save {path}: {e}"))?;
-    std::fs::rename(&tmp, &target).map_err(|e| {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = target.with_extension(format!("opus-{stamp}.tmp"));
+
+    // Write and flush to disk before replacing the original.
+    let write = || -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()
+    };
+    if let Err(e) = write() {
         let _ = std::fs::remove_file(&tmp);
-        format!("Could not save {path}: {e}. Is it open in another program?")
-    })
+        return Err(format!("Could not save {path}: {e}"));
+    }
+
+    // Antivirus or cloud sync (OneDrive) can briefly lock files; retry a few times.
+    let mut last_err = None;
+    for attempt in 0..6 {
+        match std::fs::rename(&tmp, &target) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                std::thread::sleep(std::time::Duration::from_millis(150 * (attempt + 1)));
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&tmp);
+    let e = last_err.unwrap();
+    let hint = match e.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            " The file may be read-only, open in another program, or in a folder you can't write to. Try Save as."
+        }
+        _ => " Try Save as to choose another location.",
+    };
+    Err(format!("Could not save {path}: {e}.{hint}"))
 }
 
 /// Returns `folder/name`, or `folder/name (2).pdf` etc. if that already exists.
@@ -60,18 +93,19 @@ fn unique_path(folder: String, name: String) -> String {
     unreachable!()
 }
 
-fn pdf_args(args: &[String]) -> Vec<String> {
+fn pdf_args<S: AsRef<std::ffi::OsStr>>(args: &[S]) -> Vec<String> {
     args.iter()
         .skip(1)
+        .filter_map(|a| a.as_ref().to_str().map(str::to_owned))
         .filter(|a| a.to_lowercase().ends_with(".pdf") && Path::new(a).exists())
-        .cloned()
         .collect()
 }
 
 /// PDFs passed on the command line, e.g. when double-clicking a PDF in Explorer.
 #[tauri::command]
 fn startup_files() -> Vec<String> {
-    pdf_args(&std::env::args().collect::<Vec<_>>())
+    // args_os never panics on unusual (non-Unicode) file names.
+    pdf_args(&std::env::args_os().collect::<Vec<_>>())
 }
 
 /// Opens Windows Explorer with the file selected.

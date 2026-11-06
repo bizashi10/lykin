@@ -1,7 +1,7 @@
 // Core PDF operations for Opus. Pure functions: no UI, no file system.
 // Everything here can be unit-tested in Node (see tests/run.ts).
 
-import { PDFDocument, PDFDict, PDFName, PDFRawStream, degrees } from "@cantoo/pdf-lib";
+import { PDFDocument, PDFDict, PDFName, PDFRawStream, PDFInvalidObject, degrees } from "@cantoo/pdf-lib";
 
 /** One page in the working document, pointing back at the file it came from. */
 export interface PageRef {
@@ -23,6 +23,10 @@ export interface Source {
   pageCount: number;
   /** The original rotation stored in the file for each page. */
   baseRotations: number[];
+  /** Has bookmarks, fillable form fields or internal links that a rebuild can't keep. */
+  hasExtras: boolean;
+  /** The file had protection that Opus removed on open (owner password / restrictions). */
+  restrictionsRemoved: boolean;
 }
 
 export class PasswordRequiredError extends Error {
@@ -73,14 +77,24 @@ export async function loadSource(
 ): Promise<Source> {
   if (!looksLikePdf(bytes)) throw new NotAPdfError();
 
+  try {
+    return await loadSourceInner(bytes, name, password);
+  } catch (err) {
+    if (err instanceof PasswordRequiredError || err instanceof NotAPdfError) throw err;
+    throw new NotAPdfError("This PDF is damaged or incomplete and could not be opened");
+  }
+}
+
+async function loadSourceInner(bytes: Uint8Array, name: string, password?: string): Promise<Source> {
   const base = { updateMetadata: false, throwOnInvalidObject: false } as const;
   let doc: PDFDocument;
   try {
     // First pass: just parse the file structure, without decrypting.
     doc = await PDFDocument.load(bytes, { ...base, ignoreEncryption: true });
-  } catch (err) {
-    throw new NotAPdfError(`Could not read this PDF: ${(err as Error).message ?? err}`);
+  } catch {
+    throw new NotAPdfError("This PDF is damaged or incomplete and could not be opened");
   }
+  let restrictionsRemoved = false;
 
   let clean = bytes;
   if (doc.isEncrypted) {
@@ -95,6 +109,7 @@ export async function loadSource(
       }
       throw new NotAPdfError(`Could not unlock this PDF: ${(err as Error).message ?? err}`);
     }
+    restrictionsRemoved = password === undefined;
     clean = await saveDecrypted(decrypted, doc).catch(() => copyIntoFresh(decrypted));
     doc = await PDFDocument.load(clean, base);
   }
@@ -108,7 +123,44 @@ export async function loadSource(
     bytes: clean,
     pageCount: pages.length,
     baseRotations: pages.map((p) => normalizeRotation(p.getRotation().angle)),
+    hasExtras: detectExtras(doc),
+    restrictionsRemoved,
   };
+}
+
+function detectExtras(doc: PDFDocument): boolean {
+  try {
+    if (doc.catalog.get(PDFName.of("Outlines"))) return true;
+    if (doc.getForm().getFields().length > 0) return true;
+    // Internal links (jump to another page) break when pages are copied.
+    for (const page of doc.getPages()) {
+      const annots = page.node.Annots();
+      if (!annots) continue;
+      for (let i = 0; i < annots.size(); i++) {
+        const a = doc.context.lookup(annots.get(i));
+        if (!(a instanceof PDFDict) || a.get(PDFName.of("Subtype")) !== PDFName.of("Link")) continue;
+        if (a.get(PDFName.of("Dest"))) return true;
+        const action = doc.context.lookup(a.get(PDFName.of("A")));
+        if (action instanceof PDFDict && action.get(PDFName.of("S")) === PDFName.of("GoTo")) return true;
+      }
+    }
+  } catch {
+    /* ignore: treat as no extras */
+  }
+  return false;
+}
+
+/** True when building these pages will copy them into a new file (losing bookmarks/forms). */
+export function isRebuild(pages: PageRef[], sources: Map<string, Source>): boolean {
+  const first = sources.get(pages[0]?.sourceId ?? "");
+  return !(first && pages.length === first.pageCount && pages.every((p, i) => p.sourceId === first.id && p.index === i));
+}
+
+/** Names of files whose bookmarks/forms would be lost by this save. */
+export function extrasLostBy(pages: PageRef[], sources: Map<string, Source>): string[] {
+  if (!pages.length || !isRebuild(pages, sources)) return [];
+  const ids = new Set(pages.map((p) => p.sourceId));
+  return [...ids].map((id) => sources.get(id)).filter((s): s is Source => !!s && s.hasExtras).map((s) => s.name);
 }
 
 /**
@@ -121,9 +173,14 @@ async function saveDecrypted(decrypted: PDFDocument, raw: PDFDocument): Promise<
     // Old cross-reference streams still mention the encryption; drop them
     // (they are rebuilt on save).
     const dict = obj instanceof PDFRawStream ? obj.dict : obj instanceof PDFDict ? obj : null;
-    if (dict?.get(PDFName.of("Type")) === PDFName.of("XRef")) decrypted.context.delete(ref);
+    const type = dict?.get(PDFName.of("Type"));
+    if (type === PDFName.of("XRef") || type === PDFName.of("ObjStm")) decrypted.context.delete(ref);
+    // Leftover encrypted xref streams can't be parsed and show up as invalid
+    // objects; they're unusable either way, so drop them.
+    if (obj instanceof PDFInvalidObject) decrypted.context.delete(ref);
   }
   if (encRef && "objectNumber" in (encRef as object)) decrypted.context.delete(encRef as never);
+  delete (decrypted.context.trailerInfo as { Encrypt?: unknown }).Encrypt;
   const out = await decrypted.save({ useObjectStreams: true });
   const check = await PDFDocument.load(out, { updateMetadata: false });
   if (check.isEncrypted || check.getPageCount() !== decrypted.getPageCount()) throw new Error("decrypt check failed");
@@ -173,7 +230,7 @@ export async function buildPdf(
   // order, edit that file directly. This keeps bookmarks, links and form
   // fields, which are lost when pages are copied into a new file.
   const first = sources.get(pages[0].sourceId);
-  if (first && pages.length === first.pageCount && pages.every((p, i) => p.sourceId === first.id && p.index === i)) {
+  if (first && !isRebuild(pages, sources)) {
     const doc = await PDFDocument.load(first.bytes, { updateMetadata: false, throwOnInvalidObject: false });
     doc.getPages().forEach((page, i) => {
       page.setRotation(degrees(normalizeRotation(first.baseRotations[i] + pages[i].rotation)));

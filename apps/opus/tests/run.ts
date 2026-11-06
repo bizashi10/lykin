@@ -2,7 +2,7 @@
 import { PDFDocument, StandardFonts, degrees } from "@cantoo/pdf-lib";
 import {
   loadSource, pagesOf, buildPdf, parseRanges, chunkPages, baseName,
-  PasswordRequiredError, NotAPdfError, type Source,
+  PasswordRequiredError, NotAPdfError, extrasLostBy, type Source,
 } from "../src/lib/pdfops.ts";
 
 let passed = 0;
@@ -215,6 +215,55 @@ await test("encrypted with empty open-password opens without asking", async () =
   d.encrypt({ userPassword: "", ownerPassword: "owner" });
   const s = await loadSource(await d.save(), "e.pdf");
   eq(s.pageCount, 1);
+});
+
+await test("warns before dropping form fields, not for plain saves", async () => {
+  const d = await PDFDocument.create();
+  const page = d.addPage([400, 400]);
+  d.addPage([400, 400]);
+  d.getForm().createTextField("f").addToPage(page, { x: 10, y: 10, width: 100, height: 20 });
+  const s = await loadSource(await d.save(), "form.pdf");
+  const map = new Map([[s.id, s]]);
+  const p = pagesOf(s);
+  eq(extrasLostBy(p, map), []);
+  eq(extrasLostBy([p[1], p[0]], map), ["form.pdf"]);
+  eq(extrasLostBy([p[0]], map), ["form.pdf"]);
+  const plain = await loadSource(A, "a.pdf");
+  eq(extrasLostBy(pagesOf(plain).slice(1), new Map([[plain.id, plain]])), []);
+});
+
+await test("internal links count as extras", async () => {
+  const d = await PDFDocument.create();
+  const p1 = d.addPage([300, 300]);
+  const p2 = d.addPage([300, 300]);
+  const link = d.context.obj({ Type: "Annot", Subtype: "Link", Rect: [0, 0, 50, 50], Dest: [p2.ref, "Fit"] });
+  p1.node.addAnnot(d.context.register(link));
+  const s = await loadSource(await d.save(), "links.pdf");
+  eq(s.hasExtras, true);
+});
+
+await test("removing a password leaves no /Encrypt reference", async () => {
+  const s = await loadSource(A, "a.pdf");
+  const locked = await buildPdf(pagesOf(s), new Map([[s.id, s]]), { password: "pw" });
+  const u = await loadSource(locked, "l.pdf", "pw");
+  const out = await buildPdf(pagesOf(u), new Map([[u.id, u]]));
+  const text = new TextDecoder("latin1").decode(out);
+  assert(!text.includes("/Encrypt"), "output still mentions /Encrypt");
+});
+
+await test("owner-only protected file reports restrictions removed", async () => {
+  const d = await PDFDocument.create();
+  d.addPage([300, 300]);
+  d.encrypt({ userPassword: "", ownerPassword: "owner", permissions: { printing: false } });
+  const s = await loadSource(await d.save(), "r.pdf");
+  eq(s.restrictionsRemoved, true);
+  eq((await loadSource(A, "a.pdf")).restrictionsRemoved, false);
+});
+
+await test("truncated PDF gives a friendly message", async () => {
+  try { await loadSource(A.slice(0, Math.floor(A.length / 2)), "t.pdf"); }
+  catch (e) { assert(e instanceof NotAPdfError && /damaged|incomplete|not a valid/i.test((e as Error).message), String(e)); return; }
+  // pdf-lib may recover a half file; that's acceptable too
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

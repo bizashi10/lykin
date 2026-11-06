@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  buildPdf, loadSource, pagesOf, parseRanges, chunkPages, baseName, describeGroup, normalizeRotation,
+  buildPdf, loadSource, extrasLostBy, pagesOf, parseRanges, chunkPages, baseName, describeGroup, normalizeRotation,
   PasswordRequiredError, type PageRef, type Source,
 } from "./lib/pdfops";
 import { useHistory } from "./lib/history";
@@ -123,6 +123,11 @@ export default function App() {
         }
       }
       setBusy(null);
+      for (const l of loaded) {
+        if (l.source.restrictionsRemoved) {
+          toast(`${l.file.name} had editing restrictions. Opus removes them; use Protect to add a password when saving.`);
+        }
+      }
       if (loaded.length) {
         setSources((prev) => {
           const next = new Map(prev);
@@ -139,6 +144,17 @@ export default function App() {
   const confirmDiscard = useCallback(async () => {
     if (!dirtyRef.current) return true;
     return platform.confirm("You have unsaved changes. Discard them?");
+  }, []);
+
+  /** Asks before a save that would drop bookmarks or form fields. */
+  const confirmExtrasLoss = useCallback(async (pages: PageRef[]) => {
+    const names = extrasLostBy(pages, sourcesRef.current);
+    if (!names.length) return true;
+    return platform.confirm(
+      `${names.join(", ")} has bookmarks or fillable form fields.\n\n` +
+        "Because pages were moved, removed or combined, this version of Opus can't keep them " +
+        "(the page contents themselves are kept). Your original file is not changed unless you save over it.\n\nContinue?",
+    );
   }, []);
 
   // ---------- open / merge / insert ----------
@@ -208,6 +224,7 @@ export default function App() {
     async (saveAs: boolean) => {
       if (!hasDoc || !meta) return;
       const snapshot = doc;
+      if (!(await confirmExtrasLoss(snapshot.pages))) return;
       await withBusy("Saving…", async () => {
         const bytes = await buildPdf(snapshot.pages, sourcesRef.current, { password: snapshot.password ?? undefined });
         const target = await platform.saveBytes(bytes, meta.name, saveAs ? undefined : meta.path);
@@ -217,7 +234,7 @@ export default function App() {
         toast(`Saved ${platform.fileNameOf(target)}${snapshot.password ? " (password-protected)" : ""}`, "success");
       });
     },
-    [hasDoc, meta, doc, withBusy, toast],
+    [hasDoc, meta, doc, withBusy, toast, confirmExtrasLoss],
   );
 
   // ---------- page operations ----------
@@ -273,13 +290,14 @@ export default function App() {
     const set = new Set(keys);
     const pages = doc.pages.filter((p) => set.has(p.key));
     const idx = doc.pages.map((p, i) => (set.has(p.key) ? i : -1)).filter((i) => i >= 0);
+    if (!(await confirmExtrasLoss(pages))) return;
     await withBusy("Extracting pages…", async () => {
       const bytes = await buildPdf(pages, sourcesRef.current);
       const name = `${baseName(meta?.name ?? "document")} - ${describeGroup(idx)}.pdf`;
       const target = await platform.saveBytes(bytes, name);
       if (target) toast(`Saved ${pages.length} page${pages.length === 1 ? "" : "s"} to ${platform.fileNameOf(target)}`, "success");
     });
-  }, [targetKeys, doc.pages, meta, withBusy, toast]);
+  }, [targetKeys, doc.pages, meta, withBusy, toast, confirmExtrasLoss]);
 
   const runSplit = useCallback(
     async (mode: SplitMode, value: string) => {
@@ -293,6 +311,8 @@ export default function App() {
         return;
       }
       setDialog(null);
+      const lossy = groups.find((g) => extrasLostBy(g.map((i) => doc.pages[i]), sourcesRef.current).length);
+      if (lossy && !(await confirmExtrasLoss(lossy.map((i) => doc.pages[i])))) return;
       const folder = await platform.pickFolder();
       if (!folder) return;
       await withBusy(`Splitting into ${groups.length} files…`, async () => {
@@ -310,7 +330,7 @@ export default function App() {
         );
       });
     },
-    [doc, meta, withBusy, toast],
+    [doc, meta, withBusy, toast, confirmExtrasLoss],
   );
 
   const closeDoc = useCallback(async () => {
@@ -426,7 +446,24 @@ export default function App() {
 
   // ---------- keyboard ----------
   useEffect(() => {
+    // Browser shortcuts that would reload the window (and lose unsaved work) or print it.
+    const blockBrowserKeys = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (e.key === "F5" || (ctrl && (k === "r" || k === "p" || k === "u")) || e.key === "F7" || (ctrl && e.shiftKey && k === "i")) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", blockBrowserKeys, true);
+    const onUnload = (e: BeforeUnloadEvent) => {
+      if (dirtyRef.current) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", onUnload);
     const onKey = (e: KeyboardEvent) => {
+      if (busyRef.current) {
+        if (e.ctrlKey || e.metaKey) e.preventDefault();
+        return;
+      }
       const typing = (e.target as HTMLElement)?.closest?.("input, textarea, [contenteditable]");
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
@@ -459,8 +496,14 @@ export default function App() {
       if (e.key === "Escape" && viewRef.current === "organize") setSelected(new Set());
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", blockBrowserKeys, true);
+      window.removeEventListener("beforeunload", onUnload);
+    };
   }, []);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const dialogRef = useRef(dialog);
   dialogRef.current = dialog;
   const commandOpenRef = useRef(commandOpen);
@@ -475,22 +518,28 @@ export default function App() {
     if (!platform.isDesktop) return;
     let unlistenOpen: (() => void) | undefined;
     let unlistenClose: (() => void) | undefined;
+    const openPaths = async (paths: string[]) => {
+      try {
+        openFilesRef.current(await Promise.all(paths.map(platform.readPath)));
+      } catch (err) {
+        toast(String((err as Error)?.message ?? err), "error");
+      }
+    };
     (async () => {
-      const files = await platform.startupFiles();
-      if (files.length) openFilesRef.current(await Promise.all(files.map(platform.readPath)));
-      const { listen } = await import("@tauri-apps/api/event");
-      unlistenOpen = await listen<string[]>("open-files", async (e) => {
-        openFilesRef.current(await Promise.all(e.payload.map(platform.readPath)));
-      });
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       unlistenClose = await getCurrentWindow().onCloseRequested(async (ev) => {
         if (dirtyRef.current && !(await platform.confirm("You have unsaved changes. Close Opus anyway?"))) ev.preventDefault();
       });
+      const { listen } = await import("@tauri-apps/api/event");
+      unlistenOpen = await listen<string[]>("open-files", (e) => openPaths(e.payload));
+      const files = await platform.startupFiles();
+      if (files.length) await openPaths(files);
     })().catch(console.error);
     return () => {
       unlistenOpen?.();
       unlistenClose?.();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

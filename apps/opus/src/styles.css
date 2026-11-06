@@ -155,7 +155,7 @@ button.big.primary { border-color: transparent; }
 .reader { display: flex; height: 100%; }
 .thumbs {
   width: 150px; flex: none;
-  overflow-y: auto;
+  overflow-y: auto; overflow-x: hidden;
   background: var(--bg-2);
   border-right: 1px solid var(--line);
   padding: 10px 8px;
@@ -197,9 +197,9 @@ button.big.primary { border-color: transparent; }
   position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
   display: flex; gap: 2px; padding: 3px;
   background: rgba(20, 20, 24, 0.92); border-radius: 8px; border: 1px solid var(--line-2);
-  opacity: 0; transition: opacity 0.12s;
+  opacity: 0; transition: opacity 0.12s; pointer-events: none;
 }
-.card:hover .card-actions { opacity: 1; }
+.card:hover .card-actions { opacity: 1; pointer-events: auto; }
 .card-actions button { padding: 4px 6px; }
 .card-actions button.danger:hover { color: var(--accent-2); }
 .card.drop-before::before, .card.drop-after::after {

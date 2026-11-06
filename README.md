@@ -29,6 +29,14 @@ click **More info → Run anyway**.
 - `Ctrl+K` command bar
 - Opens PDFs double-clicked in Explorer
 
+## Known limitations (v0.1)
+
+- Moving, deleting or combining pages can't yet keep bookmarks, fillable form fields or
+  internal links — Opus asks before saving when that would happen.
+- A file with separate open and owner passwords is saved with one password (no restrictions).
+- PDFs dropped onto the window from Explorer open fine, but Save will ask where to save.
+- Not yet built: compress, OCR, annotations, fill & sign, redaction, conversion, AI.
+
 ## For developers
 
 ```
