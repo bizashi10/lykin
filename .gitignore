@@ -1,0 +1,8 @@
+node_modules/
+dist/
+target/
+apps/*/public/pdfjs/
+apps/*/src-tauri/gen/
+*.log
+.DS_Store
+Thumbs.db
