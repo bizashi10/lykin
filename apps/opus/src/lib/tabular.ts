@@ -38,21 +38,43 @@ async function pageWords(source: Source, index: number): Promise<{ words: Word[]
   return { words, height: vp.height };
 }
 
-/** Clusters numbers that are within `tol` of each other into ordered groups. */
-function cluster(values: number[], tol: number): number[] {
-  const sorted = [...values].sort((a, b) => a - b);
-  const centers: number[] = [];
-  for (const v of sorted) {
-    const last = centers[centers.length - 1];
-    if (last === undefined || v - last > tol) centers.push(v);
-    else centers[centers.length - 1] = (last + v) / 2;
+/**
+ * Finds column boundaries from vertical whitespace: the x positions where NO
+ * word has ink across the whole page. This groups a column by the band it
+ * occupies, so right-aligned number columns stay together (clustering by a
+ * word's left edge splits them).
+ */
+function columnBoundaries(words: Word[], medianH: number): number[] {
+  if (words.length < 2) return [];
+  const minX = Math.min(...words.map((w) => w.x));
+  const maxX = Math.max(...words.map((w) => w.x + w.w));
+  const binW = Math.max(1.5, medianH * 0.25);
+  const bins = Math.ceil((maxX - minX) / binW) + 1;
+  const occ = new Array(bins).fill(false);
+  for (const w of words) {
+    const a = Math.max(0, Math.floor((w.x - minX) / binW));
+    const b = Math.min(bins, Math.ceil((w.x + w.w - minX) / binW));
+    for (let i = a; i < b; i++) occ[i] = true;
   }
-  return centers;
+  // A real column gap is wider than a normal inter-word space.
+  const gapBins = Math.max(2, Math.round((medianH * 1.1) / binW));
+  const boundaries: number[] = [];
+  let i = 0;
+  while (i < bins && !occ[i]) i++; // skip the left margin
+  while (i < bins) {
+    while (i < bins && occ[i]) i++; // walk through an occupied band
+    let k = i;
+    while (k < bins && !occ[k]) k++; // measure the gap
+    if (k < bins && k - i >= gapBins) boundaries.push(minX + ((i + k) / 2) * binW);
+    i = k;
+  }
+  return boundaries;
 }
 
 function buildTable(words: Word[]): PageTable {
   if (!words.length) return { rows: [], wordCount: 0 };
-  const medianH = [...words].map((w) => w.h).sort((a, b) => a - b)[Math.floor(words.length / 2)] || 10;
+  const heights = [...words].map((w) => w.h).sort((a, b) => a - b);
+  const medianH = heights[Math.floor(heights.length / 2)] || 10;
 
   // Rows: group by baseline (y), tolerance ~ 60% of text height.
   const rowTol = medianH * 0.6;
@@ -64,26 +86,21 @@ function buildTable(words: Word[]): PageTable {
     else rows.push([w]);
   }
 
-  // Columns: cluster the left edge of every word across the whole page.
-  const colTol = medianH * 1.4;
-  const colStarts = cluster(words.map((w) => w.x), colTol);
-  const columnOf = (x: number) => {
-    let best = 0, bestD = Infinity;
-    for (let i = 0; i < colStarts.length; i++) {
-      const d = Math.abs(x - colStarts[i]);
-      if (d < bestD) { bestD = d; best = i; }
-    }
-    return best;
+  const boundaries = columnBoundaries(words, medianH);
+  const columnOf = (w: Word) => {
+    const cx = w.x + w.w / 2;
+    let c = 0;
+    for (const b of boundaries) if (cx > b) c++;
+    return c;
   };
 
   const out: string[][] = [];
   for (const row of rows) {
-    const cells: string[] = new Array(colStarts.length).fill("");
+    const cells: string[] = new Array(boundaries.length + 1).fill("");
     for (const w of row.sort((a, b) => a.x - b.x)) {
-      const c = columnOf(w.x);
+      const c = columnOf(w);
       cells[c] = cells[c] ? `${cells[c]} ${w.text}` : w.text;
     }
-    // Trim trailing empty columns.
     let end = cells.length;
     while (end > 0 && cells[end - 1] === "") end--;
     out.push(cells.slice(0, end));
@@ -91,15 +108,25 @@ function buildTable(words: Word[]): PageTable {
   return { rows: out, wordCount: words.length };
 }
 
-/** If a cell is a plain number, store it as a number so Excel can sum it. */
-function asCell(text: string): string | number {
+/**
+ * Turns a numeric-looking cell into a real number (so Excel can sum it), with a
+ * display format so currency and percentages still look right.
+ */
+function asCell(text: string): { value: string | number; numFmt?: string } {
   const t = text.trim();
-  // e.g. 1,234.50  $1,234  (optional currency / thousands separators)
-  if (/^[-+]?\$?[\d,]*\.?\d+%?$/.test(t) && /\d/.test(t)) {
-    const n = Number(t.replace(/[$,%]/g, ""));
-    if (Number.isFinite(n) && !t.endsWith("%") && !t.startsWith("$")) return n;
+  // Optional leading currency symbol, thousands separators, decimals, trailing %.
+  const m = t.match(/^([-+(]?)\s*([$€£¥]?)\s*([\d,]*\.?\d+)\s*(%?)\s*(\)?)$/);
+  if (m && /\d/.test(t)) {
+    let n = Number(m[3].replace(/,/g, ""));
+    if (Number.isFinite(n)) {
+      if (m[1] === "(" && m[5] === ")") n = -n; // (123) accounting negative
+      else if (m[1] === "-") n = -n;
+      if (m[4] === "%") return { value: n, numFmt: "0.##\\%" };
+      if (m[2]) return { value: n, numFmt: `"${m[2]}"#,##0.00` };
+      return { value: n };
+    }
   }
-  return text;
+  return { value: text };
 }
 
 export interface ExcelResult {
@@ -129,7 +156,11 @@ export async function pdfToExcel(
     pagesWithText++;
     let maxCols = 0;
     for (const row of table.rows) {
-      ws.addRow(row.map(asCell));
+      const cells = row.map(asCell);
+      const added = ws.addRow(cells.map((c) => c.value));
+      cells.forEach((c, i) => {
+        if (c.numFmt) added.getCell(i + 1).numFmt = c.numFmt;
+      });
       maxCols = Math.max(maxCols, row.length);
     }
     // Rough column widths from the longest cell in each column.
