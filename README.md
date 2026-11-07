@@ -4,7 +4,7 @@ A personal, offline office suite for Windows. No ads, no account — files never
 
 | App | Replaces | Colour | Status |
 |---|---|---|---|
-| **Opus** | Adobe Acrobat (PDF) | Red | v0.5 — full tool suite + editor |
+| **Opus** | Adobe Acrobat (PDF) | Red | v0.6 — full suite + editor + AI |
 | **Prose** | Microsoft Word | Blue | planned |
 | **Ordo** | Microsoft Excel | Green | planned |
 | **Podium** | Microsoft PowerPoint | Orange | planned |
@@ -30,6 +30,7 @@ click **More info → Run anyway**.
 - **Office conversions:** Word/Excel/PowerPoint → PDF, and PDF → Word/PowerPoint (uses LibreOffice; see note)
 - **Edit:** page numbers, text or image watermark, crop — with live preview
 - **Full editor:** add text, notes, freehand drawing, highlights, lines, arrows, rectangles, ellipses, images and signatures; fill form fields; **true redaction** that removes the hidden content, not just covers it
+- **AI assistant (offline):** chat with your PDF, summarize and pull key points — runs a local model on your GPU. One-time ~4.9GB setup download; after that nothing leaves your PC.
 - **Protect:** password-protect (AES-256), unlock (known password, or print/copy/edit restrictions)
 - Batch processing: most tools take many files at once
 - Results from password-protected files stay protected

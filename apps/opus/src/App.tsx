@@ -11,6 +11,7 @@ import { hasEngine } from "./lib/native";
 import { hasOffice } from "./lib/office";
 import { isImageName } from "./lib/images";
 import { Annotate } from "./components/Annotate";
+import { AiPanel } from "./components/AiPanel";
 import { type Anno, type ImageStore, hasRedaction } from "./lib/annots";
 import { exportEdited, hasAnyAnnotations } from "./lib/editorExport";
 import { readForm, type FormInfo } from "./lib/forms";
@@ -57,6 +58,8 @@ const ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5
 export default function App() {
   const history = useHistory<Doc>(EMPTY);
   const doc = history.present;
+  const docRef = useRef(doc);
+  docRef.current = doc;
   const [sources, setSources] = useState<Map<string, Source>>(new Map());
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
@@ -78,6 +81,7 @@ export default function App() {
   const [findHits, setFindHits] = useState<number[] | null>(null);
   const [findPos, setFindPos] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [screen, setScreen] = useState<Screen>({ kind: "home" });
   const [dropped, setDropped] = useState<platform.PickedFile[] | null>(null);
   const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
@@ -98,6 +102,15 @@ export default function App() {
     const id = `img${++imgCounter.current}`;
     setImages((cur) => ({ ...cur, [id]: { bytes, type } }));
     return id;
+  }, []);
+  const getDocText = useCallback(async () => {
+    const parts: string[] = [];
+    for (const p of docRef.current.pages) {
+      const src = sourcesRef.current.get(p.sourceId);
+      if (src) parts.push(await pageText(src, p.index).catch(() => ""));
+    }
+    return parts.join("\n\n").trim();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const commitAnnos = useCallback((key: string, listForKey: Anno[]) => {
     history.commit((d) => ({ ...d, annos: { ...d.annos, [key]: listForKey } }));
@@ -523,7 +536,9 @@ export default function App() {
   const openTool = (tool: ToolDef, files: platform.PickedFile[] = []) => {
     if (tool.soon) return;
     if (tool.mode === "editor") {
-      const dest: View = tool.id === "organize" ? "organize" : "edit";
+      const wantsAi = tool.id === "chat" || tool.id === "summarize";
+      if (wantsAi) setAiOpen(true);
+      const dest: View = tool.id === "organize" ? "organize" : wantsAi ? "read" : "edit";
       if (files.length) openFiles(files.slice(0, 1)).then(() => setView(dest));
       else if (hasDoc) { setScreen({ kind: "editor" }); setView(dest); }
       else platform.pickPdfs(false).then((p) => { if (p.length) openFiles(p).then(() => setView(dest)); });
@@ -838,6 +853,9 @@ export default function App() {
           </>
         )}
         <span className="spacer" />
+        <button className={`assistant-btn ${aiOpen ? "on" : ""}`} onClick={() => setAiOpen((o) => !o)} title="AI assistant — ask about this PDF">
+          <Icon name="spark" size={15} /> <span>Assistant</span>
+        </button>
         <button className="command-hint" onClick={() => setCommandOpen(true)} title="All commands">
           <Icon name="search" size={15} /> <span>Commands</span> <kbd>Ctrl K</kbd>
         </button>
@@ -870,6 +888,7 @@ export default function App() {
         </div>
       )}
 
+      <div className="editor-body">
       <main className="workspace">
         {!hasDoc ? (
           <StartScreen onOpen={openDialog} onMerge={mergeDialog} />
@@ -919,6 +938,10 @@ export default function App() {
           />
         )}
       </main>
+      {aiOpen && hasDoc && meta && (
+        <AiPanel getText={getDocText} docName={meta.name} onClose={() => setAiOpen(false)} />
+      )}
+      </div>
 
       {hasDoc && (
         <footer className="statusbar">

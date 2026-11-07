@@ -64,6 +64,9 @@ const paths: Record<string, string> = {
   "align-left": "M4 6h16M4 12h10M4 18h14",
   "align-center": "M4 6h16M7 12h10M5 18h14",
   "align-right": "M4 6h16M10 12h10M6 18h14",
+  spark: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z",
+  send: "M4 12l16-8-6 16-3-6-7-2z",
+  stop: "M7 7h10v10H7z",
   file: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6",
 };
 

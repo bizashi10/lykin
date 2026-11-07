@@ -1,6 +1,6 @@
 // Every tool Opus offers, as shown on the home screen and in Ctrl+K.
 
-export type Category = "organize" | "optimize" | "convert" | "edit" | "secure";
+export type Category = "organize" | "optimize" | "convert" | "edit" | "secure" | "assist";
 
 export interface ToolDef {
   id: string;
@@ -30,6 +30,7 @@ export const CATEGORIES: { id: Category; name: string; hint: string }[] = [
   { id: "convert", name: "Convert", hint: "Between PDF, images and archive formats" },
   { id: "edit", name: "Edit & mark", hint: "Stamp, number, crop and annotate" },
   { id: "secure", name: "Protect & sign", hint: "Passwords, signatures and redaction" },
+  { id: "assist", name: "AI assistant", hint: "Ask questions and summarize — offline, on your PC" },
 ];
 
 export const TOOLS: ToolDef[] = [
@@ -74,6 +75,10 @@ export const TOOLS: ToolDef[] = [
   { id: "sign", name: "Sign PDF", blurb: "Draw, type or upload your signature, then place it.", category: "secure", icon: "signature", input: "pdf", multiple: false, mode: "editor", keywords: "signature initials fill form" },
   { id: "redact", name: "Redact", blurb: "Permanently black out and remove private text.", category: "secure", icon: "redact", input: "pdf", multiple: false, mode: "editor", keywords: "censor hide black out remove confidential" },
   { id: "fillsign", name: "Fill & sign", blurb: "Type into form fields and add your signature.", category: "secure", icon: "text", input: "pdf", multiple: false, mode: "editor", keywords: "form fields fill checkbox sign" },
+
+  // Assistant
+  { id: "chat", name: "Chat with your PDF", blurb: "Ask questions and get answers from the document — offline.", category: "assist", icon: "spark", input: "pdf", multiple: false, mode: "editor", keywords: "ai assistant ask question chat llm offline" },
+  { id: "summarize", name: "Summarize", blurb: "A short summary or key points, written on your PC.", category: "assist", icon: "spark", input: "pdf", multiple: false, mode: "editor", keywords: "ai summary summarize key points tldr offline" },
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);

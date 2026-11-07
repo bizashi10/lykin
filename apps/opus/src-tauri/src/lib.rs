@@ -1,6 +1,8 @@
 //! Opus backend: the small part of the app that touches the disk.
 //! All PDF work happens in the app itself; this only reads and writes files.
 
+mod ai;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::ipc::{InvokeBody, Request, Response};
@@ -468,8 +470,19 @@ pub fn run() {
             has_ghostscript,
             run_ghostscript,
             has_soffice,
-            run_soffice
+            run_soffice,
+            ai::ai_info,
+            ai::ai_setup,
+            ai::ai_cancel_setup,
+            ai::ai_start,
+            ai::ai_stop
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Opus");
+        .build(tauri::generate_context!())
+        .expect("error while running Opus")
+        .run(|_app, event| {
+            // Never leave the AI server running after Opus closes.
+            if let tauri::RunEvent::Exit = event {
+                ai::shutdown();
+            }
+        });
 }
