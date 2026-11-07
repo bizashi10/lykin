@@ -11,6 +11,7 @@ import * as native from "../lib/native";
 import { ocrToSearchablePdf } from "../lib/ocr";
 import { comparePdfs } from "../lib/compare";
 import { officeToPdf, pdfToWord, pdfToPowerpoint, isOfficeName } from "../lib/office";
+import { pdfToExcel } from "../lib/tabular";
 import * as platform from "../lib/platform";
 import { prepareImage, previewUrl, pdfToImages, extractImages, isImageName } from "../lib/images";
 import { closeSource } from "../lib/render";
@@ -475,7 +476,7 @@ const RUN_LABEL: Record<string, string> = {
   blank: "Insert pages", reverse: "Reverse pages", compress: "Compress", repair: "Repair", grayscale: "Convert to grayscale",
   flatten: "Flatten forms", metadata: "Save properties", "pdf-to-image": "Convert to images", "image-to-pdf": "Create PDF",
   "extract-images": "Extract images", pdfa: "Convert to PDF/A", "page-numbers": "Add page numbers", watermark: "Add watermark",
-  crop: "Crop pages", protect: "Protect", unlock: "Unlock", ocr: "Make searchable", compare: "Compare", "office-to-pdf": "Convert to PDF", "pdf-to-word": "Convert to Word", "pdf-to-powerpoint": "Convert to PowerPoint",
+  crop: "Crop pages", protect: "Protect", unlock: "Unlock", ocr: "Make searchable", compare: "Compare", "office-to-pdf": "Convert to PDF", "pdf-to-word": "Convert to Word", "pdf-to-powerpoint": "Convert to PowerPoint", "pdf-to-excel": "Convert to Excel",
 };
 
 const isPagePicker = (id: string) => id === "remove" || id === "extract";
@@ -1155,6 +1156,12 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
       return each(async (it, src) => ({ name: `${baseName(it.name)}.docx`, bytes: await pdfToWord(src.bytes), kind: "pdf", note: "Word", good: true, from: it }));
     case "pdf-to-powerpoint":
       return each(async (it, src) => ({ name: `${baseName(it.name)}.pptx`, bytes: await pdfToPowerpoint(src.bytes), kind: "pdf", note: "PowerPoint", good: true, from: it }));
+    case "pdf-to-excel":
+      return each(async (it, src) => {
+        const r = await pdfToExcel(src, { onProgress: (d, t) => progress(items.length > 1 ? `${it.name}: page ${d} of ${t}` : `Page ${d} of ${t}…`) });
+        const note = r.pagesWithText ? `${r.pagesWithText} sheet${r.pagesWithText === 1 ? "" : "s"}${r.emptyPages ? ` · ${r.emptyPages} page${r.emptyPages === 1 ? "" : "s"} had no text` : ""}` : "No text found — try OCR first";
+        return { name: `${baseName(it.name)}.xlsx`, bytes: r.bytes, kind: "pdf", note, good: r.pagesWithText > 0, from: it };
+      });
     default:
       throw new Error("This tool isn't available yet");
   }

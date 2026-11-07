@@ -4,7 +4,7 @@ A personal, offline office suite for Windows. No ads, no account — files never
 
 | App | Replaces | Colour | Status |
 |---|---|---|---|
-| **Opus** | Adobe Acrobat (PDF) | Red | v0.4 — 28 tools, editor, OCR, conversions |
+| **Opus** | Adobe Acrobat (PDF) | Red | v0.5 — full tool suite + editor |
 | **Prose** | Microsoft Word | Blue | planned |
 | **Ordo** | Microsoft Excel | Green | planned |
 | **Podium** | Microsoft PowerPoint | Orange | planned |
@@ -23,7 +23,8 @@ click **More info → Run anyway**.
 - **Home:** type what you want ("compress", "password"…), or drop files anywhere for suggestions. Recent files, light/dark theme, `Ctrl+K` command bar.
 - **Organize:** merge, split, organize pages (drag, rotate, delete), remove pages, extract pages, rotate, insert blank pages, reverse order
 - **Optimize:** compress (3 levels), repair, grayscale, flatten forms, edit properties
-- **Convert:** PDF to JPG/PNG, images to PDF (phone photos auto-rotated), extract images, PDF/A-1b/2b/3b
+- **Convert:** PDF↔Word/PowerPoint and Office→PDF (LibreOffice), PDF→Excel (table reconstruction), OCR scans to searchable PDFs, PDF↔images
+- **Also convert:** PDF to JPG/PNG, images to PDF (phone photos auto-rotated), extract images, PDF/A-1b/2b/3b
 - **OCR:** make scanned PDFs searchable and copyable, offline (bundled Tesseract); optional .txt export
 - **Compare:** side-by-side visual + text diff of two PDFs
 - **Office conversions:** Word/Excel/PowerPoint → PDF, and PDF → Word/PowerPoint (uses LibreOffice; see note)

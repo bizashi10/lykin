@@ -1,7 +1,7 @@
 {
   "name": "lykin-opus",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ocr-assets.mjs && vite",
@@ -16,6 +16,7 @@
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@tauri-apps/api": "^2.12.0",
     "@tauri-apps/plugin-dialog": "^2.8.0",
+    "exceljs": "^4.4.0",
     "pdfjs-dist": "^6.5.438",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
