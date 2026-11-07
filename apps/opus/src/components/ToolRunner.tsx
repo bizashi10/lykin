@@ -8,6 +8,7 @@ import {
 } from "../lib/pdfops";
 import * as T from "../lib/tools";
 import * as native from "../lib/native";
+import { ocrToSearchablePdf } from "../lib/ocr";
 import * as platform from "../lib/platform";
 import { prepareImage, previewUrl, pdfToImages, extractImages, isImageName } from "../lib/images";
 import { closeSource } from "../lib/render";
@@ -451,7 +452,7 @@ const RUN_LABEL: Record<string, string> = {
   blank: "Insert pages", reverse: "Reverse pages", compress: "Compress", repair: "Repair", grayscale: "Convert to grayscale",
   flatten: "Flatten forms", metadata: "Save properties", "pdf-to-image": "Convert to images", "image-to-pdf": "Create PDF",
   "extract-images": "Extract images", pdfa: "Convert to PDF/A", "page-numbers": "Add page numbers", watermark: "Add watermark",
-  crop: "Crop pages", protect: "Protect", unlock: "Unlock",
+  crop: "Crop pages", protect: "Protect", unlock: "Unlock", ocr: "Make searchable",
 };
 
 const isPagePicker = (id: string) => id === "remove" || id === "extract";
@@ -494,6 +495,9 @@ interface Values {
   password: string;
   password2: string;
   info: T.DocInfo | null;
+  ocrDpi: number;
+  ocrForce: boolean;
+  ocrText: boolean;
 }
 
 const DEFAULTS: Values = {
@@ -503,6 +507,7 @@ const DEFAULTS: Values = {
   numPos: "bottom-center", numFormat: "{n}", numStart: 1, numSize: 11, numSkipFirst: false, numFont: "sans", color: "#1b1f27",
   wmKind: "text", wmText: "CONFIDENTIAL", wmSize: 54, wmOpacity: 0.25, wmAngle: 45, wmLayout: "center", wmBold: true,
   crop: { top: 10, right: 10, bottom: 10, left: 10 }, password: "", password2: "", info: null,
+  ocrDpi: 200, ocrForce: false, ocrText: false,
 };
 
 function useToolOptions(_toolId: string) {
@@ -775,6 +780,20 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
           <Explainer text="Removes both kinds of lock: the password needed to open a file, and restrictions on printing, copying or editing." />
           <Explainer text="For files that need a password to open, Opus asks for it when you add them. Restrictions are removed without a password." />
           <Explainer text="Opus can't open a file whose password you don't know." />
+        </>
+      );
+    case "ocr":
+      return (
+        <>
+          <Explainer text="Opus reads the text in scanned pages and adds an invisible, selectable text layer — so you can search, copy and select. Runs entirely on your PC (English)." />
+          <Field label="Detail" hint={v.ocrDpi >= 300 ? "Best accuracy, slower" : v.ocrDpi <= 150 ? "Fastest, lower accuracy" : "Good for most scans"}>
+            <Segmented label="Detail" value={v.ocrDpi} onChange={(ocrDpi) => set({ ocrDpi })} options={[
+              { value: 150, label: "Fast" }, { value: 200, label: "Balanced" }, { value: 300, label: "Best" },
+            ]} />
+          </Field>
+          <Toggle checked={v.ocrText} onChange={(ocrText) => set({ ocrText })} label="Also save the text as a .txt file" />
+          <Toggle checked={v.ocrForce} onChange={(ocrForce) => set({ ocrForce })} label="Re-read pages that already have text" />
+          <Explainer text="Pages that already contain text are kept as they are, unless you turn that on." />
         </>
       );
     default:
@@ -1076,6 +1095,14 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
           it.lock !== "none",
         ),
       );
+    case "ocr":
+      return each(async (it, src) => {
+        const r = await ocrToSearchablePdf(src, { dpi: v.ocrDpi, force: v.ocrForce, onProgress: (d, t) => progress(items.length > 1 ? `${it.name}: page ${d + 1} of ${t}` : `Reading page ${d + 1} of ${t}…`) });
+        const note = r.ocred ? `${r.ocred} page${r.ocred === 1 ? "" : "s"} read${r.skipped ? `, ${r.skipped} already had text` : ""}` : "All pages already had text";
+        const outs: Output[] = [{ name: `${baseName(it.name)}-searchable.pdf`, bytes: r.pdf, kind: "pdf", note, good: r.ocred > 0, from: it }];
+        if (v.ocrText && r.text.trim()) outs.push({ name: `${baseName(it.name)}.txt`, bytes: new TextEncoder().encode(r.text), kind: "pdf", note: "text", from: it });
+        return outs;
+      });
     default:
       throw new Error("This tool isn't available yet");
   }

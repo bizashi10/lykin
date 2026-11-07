@@ -7,3 +7,4 @@ apps/*/src-tauri/gen/
 .DS_Store
 Thumbs.db
 apps/*/src-tauri/resources/gs/
+apps/*/public/tesseract/

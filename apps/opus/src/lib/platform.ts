@@ -59,6 +59,7 @@ function typeOf(name: string): { mime: string; ext: string; filter: { name: stri
   const ext = (name.match(/\.([a-z0-9]+)$/i)?.[1] ?? "pdf").toLowerCase();
   if (ext === "jpg" || ext === "jpeg") return { mime: "image/jpeg", ext: "jpg", filter: [{ name: "JPEG image", extensions: ["jpg", "jpeg"] }] };
   if (ext === "png") return { mime: "image/png", ext: "png", filter: [{ name: "PNG image", extensions: ["png"] }] };
+  if (ext === "txt") return { mime: "text/plain", ext: "txt", filter: [{ name: "Text file", extensions: ["txt"] }] };
   return { mime: "application/pdf", ext: "pdf", filter: PDF_FILTER };
 }
 

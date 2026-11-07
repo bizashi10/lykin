@@ -56,7 +56,7 @@ export const TOOLS: ToolDef[] = [
   { id: "pdf-to-word", name: "PDF to Word", blurb: "Editable Word document from a PDF.", category: "convert", icon: "file", input: "pdf", multiple: true, mode: "batch", soon: true, keywords: "docx doc" },
   { id: "pdf-to-excel", name: "PDF to Excel", blurb: "Pull tables into a spreadsheet.", category: "convert", icon: "table", input: "pdf", multiple: true, mode: "batch", soon: true, keywords: "xlsx table" },
   { id: "office-to-pdf", name: "Office to PDF", blurb: "Word, Excel and PowerPoint files to PDF.", category: "convert", icon: "file", input: "pdf", multiple: true, mode: "batch", soon: true, keywords: "docx xlsx pptx" },
-  { id: "ocr", name: "OCR scans", blurb: "Make scanned pages searchable and copyable.", category: "convert", icon: "scan", input: "pdf", multiple: true, mode: "batch", soon: true, keywords: "text recognition scanned" },
+  { id: "ocr", name: "OCR scans", blurb: "Make scanned pages searchable and copyable, offline.", category: "convert", icon: "scan", input: "pdf", multiple: true, mode: "batch", keywords: "text recognition scanned searchable tesseract extract" },
 
   // Edit
   { id: "page-numbers", name: "Page numbers", blurb: "Number pages, with the style and position you want.", category: "edit", icon: "hash", input: "pdf", multiple: true, mode: "batch", keywords: "numbering footer header" },
