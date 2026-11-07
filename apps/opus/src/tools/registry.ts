@@ -79,12 +79,15 @@ export function matchTool(t: ToolDef, q: string): number {
   const query = q.trim().toLowerCase();
   if (!query) return 1;
   const name = t.name.toLowerCase();
-  const hay = `${name} ${t.blurb.toLowerCase()} ${t.keywords ?? ""}`;
+  const nameWords = name.split(/[^a-z0-9/]+/);
+  const keyWords = `${t.keywords ?? ""} ${t.blurb.toLowerCase()}`.split(/[^a-z0-9/]+/);
   let score = 0;
   for (const w of query.split(/\s+/)) {
-    if (name.startsWith(w)) score += 5;
-    else if (name.includes(w)) score += 3;
-    else if (hay.includes(w)) score += 1;
+    if (nameWords.some((x) => x === w)) score += 8; // whole word in the name
+    else if (nameWords.some((x) => x.startsWith(w))) score += 6;
+    else if (keyWords.some((x) => x === w)) score += 4; // whole keyword
+    else if (keyWords.some((x) => x.startsWith(w))) score += 2;
+    else if (name.includes(w)) score += 1;
     else return 0;
   }
   return score;

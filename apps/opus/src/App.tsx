@@ -92,6 +92,16 @@ export default function App() {
     setTheme(next);
     saveTheme(next);
   };
+  const toolUnsaved = useRef(false);
+  /** Moves between screens, asking first if a tool has unsaved results. */
+  const navigate = useCallback(async (next: Screen) => {
+    if (screenRef.current.kind === "tool" && toolUnsaved.current) {
+      if (!(await platform.confirm("Your results haven't been saved. Leave this tool anyway?"))) return false;
+      toolUnsaved.current = false;
+    }
+    setScreen(next);
+    return true;
+  }, []);
   const remember = (path: string | undefined, name: string) => {
     if (path && platform.isDesktop) setRecents(addRecent(path, name));
   };
@@ -131,7 +141,7 @@ export default function App() {
 
   /** Loads files, asking for passwords when needed. Skips files that fail. */
   const loadPicked = useCallback(
-    async (picked: platform.PickedFile[], opts: { lenient?: boolean } = {}) => {
+    async (picked: platform.PickedFile[], opts: { lenient?: boolean; register?: boolean } = {}) => {
       const loaded: { source: Source; password?: string; file: platform.PickedFile }[] = [];
       const failed: { file: platform.PickedFile; failed: true }[] = [];
       for (const file of picked) {
@@ -163,7 +173,7 @@ export default function App() {
           toast(`${l.file.name} had editing restrictions. Opus removes them; use Protect to add a password when saving.`);
         }
       }
-      if (loaded.length) {
+      if (loaded.length && opts.register !== false) {
         setSources((prev) => {
           const next = new Map(prev);
           loaded.forEach((l) => next.set(l.source.id, l.source));
@@ -177,7 +187,7 @@ export default function App() {
   );
   const loadForTool = useCallback(
     (files: platform.PickedFile[], opts?: { lenient?: boolean }) =>
-      loadPicked(files, opts) as Promise<(LoadedPdf | { file: platform.PickedFile; failed: true })[]>,
+      loadPicked(files, { ...opts, register: false }) as Promise<(LoadedPdf | { file: platform.PickedFile; failed: true })[]>,
     [loadPicked],
   );
 
@@ -202,6 +212,10 @@ export default function App() {
     async (picked: platform.PickedFile[]) => {
       if (!picked.length) return;
       if (!(await confirmDiscard())) return;
+      if (screenRef.current.kind === "tool" && toolUnsaved.current) {
+        if (!(await platform.confirm("Your results haven't been saved. Leave this tool anyway?"))) return;
+        toolUnsaved.current = false;
+      }
       const loaded = (await loadPicked(picked)) as { source: Source; password?: string; file: platform.PickedFile }[];
       if (!loaded.length) return;
       const pages = loaded.flatMap((l) => pagesOf(l.source));
@@ -460,13 +474,13 @@ export default function App() {
       return;
     }
     setDropped(null);
-    setScreen({ kind: "tool", tool, files, key: Date.now() });
+    navigate({ kind: "tool", tool, files, key: Date.now() });
   };
   const toolCommands: Command[] = TOOLS.filter((t) => !t.soon).map((t) => ({
     id: `tool-${t.id}`, title: t.name, keywords: `tool ${t.keywords ?? ""} ${t.blurb}`, run: () => openTool(t),
   }));
   const commands: Command[] = [
-    { id: "home", title: "Home — all tools", keywords: "start tools menu", run: () => setScreen({ kind: "home" }) },
+    { id: "home", title: "Home — all tools", keywords: "start tools menu", run: () => navigate({ kind: "home" }) },
     { id: "theme", title: `Theme: switch to ${theme === "system" ? "dark" : theme === "dark" ? "light" : "system"}`, keywords: "dark light mode appearance", run: cycleTheme },
     { id: "open", title: "Open PDF…", shortcut: "Ctrl+O", keywords: "file load", run: openDialog },
     { id: "merge", title: "Merge PDFs into a new file…", keywords: "combine join several", run: mergeDialog },
@@ -664,11 +678,11 @@ export default function App() {
     >
       <nav className="rail" aria-label="Main">
         <div className="rail-brand" title="Opus — by Lykin"><span>O</span></div>
-        <button className={`rail-btn ${screen.kind === "home" || screen.kind === "tool" ? "on" : ""}`} onClick={() => setScreen({ kind: "home" })} title="All tools" aria-label="All tools">
+        <button className={`rail-btn ${screen.kind === "home" || screen.kind === "tool" ? "on" : ""}`} onClick={() => navigate({ kind: "home" })} title="All tools" aria-label="All tools">
           <Icon name="tools" size={21} />
           <span>Tools</span>
         </button>
-        <button className={`rail-btn ${screen.kind === "editor" ? "on" : ""}`} onClick={() => (hasDoc ? setScreen({ kind: "editor" }) : openDialog())} title={hasDoc ? `Editor — ${meta?.name}` : "Open a PDF in the editor"} aria-label="Editor">
+        <button className={`rail-btn ${screen.kind === "editor" ? "on" : ""}`} onClick={() => (hasDoc ? navigate({ kind: "editor" }) : openDialog())} title={hasDoc ? `Editor — ${meta?.name}` : "Open a PDF in the editor"} aria-label="Editor">
           <Icon name="read" size={21} />
           <span>Editor</span>
           {hasDoc && <i className={`rail-dot ${dirty ? "dirty" : ""}`} />}
@@ -714,7 +728,10 @@ export default function App() {
           loadPdfs={loadForTool}
           engineReady={engineReady}
           toast={toast}
-          onBack={() => setScreen({ kind: "home" })}
+          onUnsavedChange={(u) => {
+            toolUnsaved.current = u;
+          }}
+          onBack={() => navigate({ kind: "home" })}
           onOpenInEditor={async (o) => {
             await openFiles([{ name: o.name, bytes: o.bytes }]);
           }}

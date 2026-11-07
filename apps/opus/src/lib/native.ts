@@ -67,7 +67,7 @@ export async function repair(input: Uint8Array): Promise<Uint8Array> {
 
 const PDFA_DEF = `%!
 % Opus: PDF/A output intent (sRGB)
-/ICCProfile ({icc}) def
+/ICCProfile <{icchex}> def
 [/_objdef {icc_PDFA} /type /stream /OBJ pdfmark
 [{icc_PDFA} << /N 3 >> /PUT pdfmark
 [{icc_PDFA} ICCProfile (r) file /PUT pdfmark

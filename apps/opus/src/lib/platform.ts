@@ -55,8 +55,15 @@ async function writePath(path: string, bytes: Uint8Array): Promise<void> {
   await invoke("write_file", bytes, { headers: { "x-path": encodeURIComponent(path) } });
 }
 
+function typeOf(name: string): { mime: string; ext: string; filter: { name: string; extensions: string[] }[] } {
+  const ext = (name.match(/\.([a-z0-9]+)$/i)?.[1] ?? "pdf").toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return { mime: "image/jpeg", ext: "jpg", filter: [{ name: "JPEG image", extensions: ["jpg", "jpeg"] }] };
+  if (ext === "png") return { mime: "image/png", ext: "png", filter: [{ name: "PNG image", extensions: ["png"] }] };
+  return { mime: "application/pdf", ext: "pdf", filter: PDF_FILTER };
+}
+
 function download(bytes: Uint8Array, name: string) {
-  const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+  const blob = new Blob([bytes as BlobPart], { type: typeOf(name).mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -77,9 +84,10 @@ export async function saveBytes(
   if (isDesktop) {
     let target = path ?? null;
     if (!target) {
-      target = await save({ defaultPath: suggestedName, filters: PDF_FILTER, title: "Save PDF" });
+      const t = typeOf(suggestedName);
+      target = await save({ defaultPath: suggestedName, filters: t.filter, title: t.ext === "pdf" ? "Save PDF" : "Save image" });
       if (!target) return null;
-      if (!/\.pdf$/i.test(target)) target += ".pdf";
+      if (!t.filter[0].extensions.some((e) => target!.toLowerCase().endsWith(`.${e}`))) target += `.${t.ext}`;
     }
     await writePath(target, bytes);
     return target;

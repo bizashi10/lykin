@@ -125,9 +125,30 @@ fn show_in_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+fn quiet(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no black console flash
+    }
+    cmd
+}
+
+/// The app's resource folder, as a normal path (no `\\?\` prefix on Windows,
+/// which Ghostscript can't read).
+fn resources(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().resource_dir().ok().map(|p| dunce::simplified(&p).to_path_buf())
+}
+
+static GS_PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+
 /// Finds the bundled Ghostscript (Windows) or a system one (development).
 fn ghostscript_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    if let Ok(res) = app.path().resource_dir() {
+    GS_PATH.get_or_init(|| find_ghostscript(app)).clone()
+}
+
+fn find_ghostscript(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if let Some(res) = resources(app) {
         for name in ["gs/gswin64c.exe", "gs/bin/gswin64c.exe", "gs/gs"] {
             let p = res.join(name);
             if p.exists() {
@@ -136,7 +157,7 @@ fn ghostscript_path(app: &tauri::AppHandle) -> Option<PathBuf> {
         }
     }
     for name in ["gswin64c", "gs"] {
-        let probe = std::process::Command::new(name).arg("--version").output();
+        let probe = quiet(std::process::Command::new(name).arg("--version")).output();
         if probe.map(|o| o.status.success()).unwrap_or(false) {
             return Some(PathBuf::from(name));
         }
@@ -197,11 +218,8 @@ fn run_ghostscript(app: tauri::AppHandle, request: Request<'_>) -> Result<Respon
     // Ghostscript accepts forward slashes on Windows, and they need no escaping
     // inside PostScript strings.
     let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
-    let icc = app
-        .path()
-        .resource_dir()
+    let icc = resources(&app)
         .map(|r| r.join("srgb.icc"))
-        .ok()
         .filter(|p| p.exists())
         .or_else(|| {
             let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/srgb.icc");
@@ -213,8 +231,12 @@ fn run_ghostscript(app: tauri::AppHandle, request: Request<'_>) -> Result<Respon
         .and_then(Path::parent)
         .map(|p| format!("{}/", slash(p)))
         .unwrap_or_default();
+    // Paths inside PostScript are written as hex strings, so any character
+    // (brackets, accents, spaces) in a folder name is safe.
+    let icc_hex: String = icc_path.bytes().map(|b| format!("{b:02x}")).collect();
     let fix = |a: &str| {
-        a.replace("{in}", &slash(&input))
+        a.replace("{icchex}", &icc_hex)
+            .replace("{in}", &slash(&input))
             .replace("{out}", &slash(&output))
             .replace("{dir}", &slash(&dir))
             .replace("{icc}", &icc_path)
@@ -226,28 +248,59 @@ fn run_ghostscript(app: tauri::AppHandle, request: Request<'_>) -> Result<Respon
             cleanup(&dir);
             return Err("Bad file name".into());
         }
-        let _ = std::fs::write(dir.join(name), fix(content));
+        if let Err(e) = std::fs::write(dir.join(name), fix(content)) {
+            cleanup(&dir);
+            return Err(e.to_string());
+        }
     }
     let mut cmd = std::process::Command::new(&gs);
-    cmd.current_dir(&dir)
+    // The output file must be set before any PostScript (like the PDF/A
+    // definition) runs, so it comes first; the input PDF goes last.
+    quiet(&mut cmd)
+        .current_dir(&dir)
         .args(["-dSAFER", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=pdfwrite"])
+        .arg(format!("-sOutputFile={}", slash(&output)))
         .args(args.iter().map(|a| fix(a)))
-        .arg(format!("-sOutputFile={}", slash(&output)));
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no black console flash
-    }
-    // Input file goes last.
-    cmd.arg(&input);
-    let result = cmd.output();
-    let out = match result {
-        Ok(o) if o.status.success() && output.exists() => std::fs::read(&output).map_err(|e| e.to_string()),
-        Ok(o) => {
-            let msg = String::from_utf8_lossy(&o.stderr).lines().take(4).collect::<Vec<_>>().join(" ");
-            Err(format!("The PDF engine could not process this file. {msg}"))
-        }
+        .arg(&input)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    let out = match cmd.spawn() {
         Err(e) => Err(format!("Could not start the PDF engine: {e}")),
+        Ok(mut child) => {
+            // Drain error output on a side thread so a chatty run can't block
+            // on a full pipe.
+            let reader = child.stderr.take().map(|mut e| {
+                std::thread::spawn(move || {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = e.read_to_string(&mut buf);
+                    buf
+                })
+            });
+            // Never hang forever on a pathological file: give up after 10 minutes.
+            let started = std::time::Instant::now();
+            let status = loop {
+                match child.try_wait() {
+                    Ok(Some(s)) => break Some(s),
+                    Ok(None) if started.elapsed() > std::time::Duration::from_secs(600) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break None;
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                    Err(_) => break None,
+                }
+            };
+            let stderr = reader.and_then(|h| h.join().ok()).unwrap_or_default();
+            match status {
+                Some(s) if s.success() && output.exists() => std::fs::read(&output).map_err(|e| e.to_string()),
+                Some(_) => {
+                    let msg = stderr.lines().filter(|l| !l.trim().is_empty()).take(3).collect::<Vec<_>>().join(" ");
+                    Err(format!("The PDF engine couldn't process this file. {msg}").trim().to_string())
+                }
+                None => Err("The PDF engine took too long and was stopped.".into()),
+            }
+        }
     };
     cleanup(&dir);
     out.map(Response::new)

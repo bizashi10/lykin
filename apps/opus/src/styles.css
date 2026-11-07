@@ -374,7 +374,7 @@ kbd {
 .tool-cat { margin-left: auto; color: var(--hue); font-size: 12.5px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--hue) 40%, transparent); padding: 3px 10px; border-radius: 999px; }
 
 .tool-body {
-  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) clamp(290px, 30vw, 360px); gap: 0;
   flex: 1; min-height: 0;
 }
 .tool-files { padding: 24px 32px; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
@@ -432,6 +432,11 @@ button.run { width: 100%; justify-content: center; padding: 13px; font-size: 15p
 }
 .pill.gold { background: var(--gold-soft); color: var(--gold); }
 .pill.green { background: var(--ok-soft); color: var(--ok); }
+.pill.red { background: var(--accent-soft); color: var(--accent); white-space: normal; }
+.result-row.failed .result-name { color: var(--text-2); }
+.saved-tick { color: var(--ok); display: inline-flex; }
+.command-results.empty { padding: 14px 16px; color: var(--text-3); font-size: 13.5px; }
+input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
 
 .page-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
 .pick { position: relative; flex-direction: column; padding: 10px 8px 6px; border-radius: var(--r-md); border: 2px solid transparent; }
@@ -690,7 +695,7 @@ button.big.primary { border-color: transparent; }
   box-shadow: var(--pop-shadow);
 }
 
-.toasts { position: fixed; right: 20px; top: 16px; z-index: 70; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.toasts { position: fixed; left: 92px; bottom: 18px; z-index: 70; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .toast {
   display: flex; align-items: center; gap: 12px;
   max-width: 460px;
@@ -718,13 +723,18 @@ button.big.primary { border-color: transparent; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---------- responsive ---------- */
-@media (max-width: 1000px) {
-  .tool-screen { overflow-y: auto; }
-  .tool-body { grid-template-columns: 1fr; flex: none; }
-  .tool-files { overflow: visible; }
-  .tool-panel { border-left: none; border-top: 1px solid var(--line); }
+@media (max-width: 860px) {
+  /* Stacked: options come right after the files, and the action button
+     stays pinned to the bottom of the window. */
+  .tool-screen { overflow-y: auto; padding-bottom: 84px; }
+  .tool-body { display: flex; flex-direction: column; flex: none; }
+  .tool-files { overflow: visible; display: contents; }
+  .tool-files > * { margin-left: 16px; margin-right: 16px; }
+  .tool-files > :first-child { margin-top: 16px; }
+  .live-preview { order: 3; }
+  .tool-panel { order: 2; border-left: none; border-top: 1px solid var(--line); margin-top: 16px; }
   .panel-scroll { overflow: visible; }
-  .panel-foot { position: sticky; bottom: 0; background: var(--bg-2); }
+  .panel-foot { position: fixed; left: 72px; right: 0; bottom: 0; z-index: 8; background: var(--bg-2); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18); }
 }
 @media (max-width: 720px) {
   .shell { flex-direction: column-reverse; }
@@ -735,7 +745,8 @@ button.big.primary { border-color: transparent; }
   .home-inner { padding: 0 18px 28px; }
   .hero { padding-top: 36px; }
   .open-btn span, .tool-cat { display: none; }
-  .toasts { top: auto; bottom: 70px; left: 12px; right: 12px; align-items: stretch; }
+  .toasts { bottom: 150px; left: 12px; right: 12px; align-items: stretch; }
+  .panel-foot { left: 0; bottom: 58px; }
   .tool-head, .tool-files { padding-left: 16px; padding-right: 16px; }
   .tool-grid { grid-template-columns: 1fr; }
   .category-head { flex-direction: column; gap: 2px; }

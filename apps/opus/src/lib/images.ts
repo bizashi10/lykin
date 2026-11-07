@@ -4,6 +4,8 @@
 import type { ImageInput } from "./tools";
 import type { Source } from "./pdfops";
 import { getPage } from "./render";
+import { jpegOrientation } from "./exif";
+export { jpegOrientation };
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif|tiff?|ico)$/i;
 export const isImageName = (name: string) => IMAGE_RE.test(name);
@@ -42,15 +44,10 @@ export async function prepareImage(bytes: Uint8Array, name: string): Promise<Ima
     bitmap.close();
     return { name, bytes, type: "png", width, height };
   }
-  if (kind === "jpg") {
-    // If the decoded size matches the raw size the photo needs no rotation.
-    const raw = await createImageBitmap(new Blob([bytes as BlobPart]), { imageOrientation: "none" }).catch(() => null);
-    const same = raw && raw.width === width && raw.height === height;
-    raw?.close();
-    if (same) {
-      bitmap.close();
-      return { name, bytes, type: "jpg", width, height };
-    }
+  if (kind === "jpg" && jpegOrientation(bytes) === 1) {
+    // Upright already: embed the original JPEG untouched (no quality loss).
+    bitmap.close();
+    return { name, bytes, type: "jpg", width, height };
   }
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -139,7 +136,15 @@ export async function extractImages(source: Source, baseName: string): Promise<R
         ctx.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
       } else continue;
       n++;
-      out.push({ name: `${baseName}-p${i + 1}-${n}.png`, bytes: await canvasToBytes(canvas, "image/png") });
+      // Photos without transparency are saved as JPG (much smaller than PNG).
+      const px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let opaque = true;
+      for (let a = 3; a < px.length; a += 4 * 7) if (px[a] < 255) { opaque = false; break; }
+      const asJpg = opaque && img.width * img.height > 40_000;
+      out.push({
+        name: `${baseName}-p${i + 1}-${n}.${asJpg ? "jpg" : "png"}`,
+        bytes: await canvasToBytes(canvas, asJpg ? "image/jpeg" : "image/png", 0.92),
+      });
     }
   }
   return out;

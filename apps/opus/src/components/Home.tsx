@@ -28,7 +28,7 @@ export function Home(props: Props) {
     if (!q.trim()) return [];
     return TOOLS.map((t) => ({ t, s: matchTool(t, q) }))
       .filter((x) => x.s > 0)
-      .sort((a, b) => Number(!!a.t.soon) - Number(!!b.t.soon) || b.s - a.s)
+      .sort((a, b) => b.s - a.s || Number(!!a.t.soon) - Number(!!b.t.soon))
       .map((x) => x.t);
   }, [q]);
   useEffect(() => setActive(0), [q]);
@@ -67,13 +67,16 @@ export function Home(props: Props) {
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)); }
                 else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
-                else if (e.key === "Enter" && results[active]) { e.preventDefault(); launch(results[active]); }
+                else if (e.key === "Enter" && results[active] && !results[active].soon) { e.preventDefault(); launch(results[active]); }
                 else if (e.key === "Escape") setQ("");
               }}
             />
             <button className="open-btn" onClick={props.onOpen} title="Open a PDF in the page editor (Ctrl+O)">
               <Icon name="open" size={17} /> <span>Open PDF</span>
             </button>
+            {q.trim() && results.length === 0 && (
+              <div className="command-results empty">No tool matches “{q.trim()}”. Try words like merge, compress or password.</div>
+            )}
             {results.length > 0 && (
               <div className="command-results" role="listbox">
                 {results.slice(0, 7).map((t, i) => (

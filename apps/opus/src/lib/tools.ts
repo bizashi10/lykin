@@ -306,7 +306,13 @@ export async function imagesToPdf(images: ImageInput[], o: ImagesToPdfOptions): 
 
 /** Re-saves a PDF through pdf-lib's tolerant parser (fixes many broken files). */
 export async function resave(bytes: Uint8Array): Promise<Uint8Array> {
-  const doc = await load(bytes);
+  if (bytes.length < 64) throw new Error("This file is empty — there is nothing to repair");
+  let doc: PDFDocument;
+  try {
+    doc = await load(bytes);
+  } catch {
+    throw new Error("This file is too damaged to repair");
+  }
   if (doc.getPageCount() === 0) throw new Error("No readable pages were found in this file");
   return saveDoc(doc);
 }
@@ -333,7 +339,8 @@ export async function writeInfo(bytes: Uint8Array, info: DocInfo): Promise<Uint8
   doc.setTitle(info.title);
   doc.setAuthor(info.author);
   doc.setSubject(info.subject);
-  doc.setKeywords(info.keywords.split(",").map((k) => k.trim()).filter(Boolean));
+  // Stored exactly as typed so it reads back the same way.
+  doc.setKeywords([info.keywords.trim()]);
   return saveDoc(doc);
 }
 
@@ -349,15 +356,16 @@ export async function flattenForms(bytes: Uint8Array): Promise<Uint8Array> {
 /** Adds blank pages: after every page, or at the end. */
 export async function insertBlank(bytes: Uint8Array, where: "end" | "start" | "between"): Promise<Uint8Array> {
   const doc = await load(bytes);
-  const size = doc.getPage(0).getSize();
-  if (where === "end") doc.addPage([size.width, size.height]);
-  else if (where === "start") doc.insertPage(0, [size.width, size.height]);
+  // Blank pages match the neighbouring page as it is seen (rotation included).
+  const seen = (i: number): [number, number] => {
+    const f = frameOf(doc.getPage(i));
+    return [f.vw, f.vh];
+  };
+  const n = doc.getPageCount();
+  if (where === "end") doc.addPage(seen(n - 1));
+  else if (where === "start") doc.insertPage(0, seen(0));
   else {
-    const n = doc.getPageCount();
-    for (let i = n - 1; i > 0; i--) {
-      const s = doc.getPage(i - 1).getSize();
-      doc.insertPage(i, [s.width, s.height]);
-    }
+    for (let i = n - 1; i > 0; i--) doc.insertPage(i, seen(i - 1));
   }
   return saveDoc(doc);
 }
@@ -369,6 +377,22 @@ export async function reversePages(bytes: Uint8Array): Promise<Uint8Array> {
   const pages = await out.copyPages(src, src.getPageIndices().reverse());
   pages.forEach((p) => out.addPage(p));
   return saveDoc(out);
+}
+
+/** Characters the built-in PDF fonts can't draw (shown as "?"). */
+export function unsupportedChars(text: string): string {
+  return [...new Set([...text].filter((c) => c.charCodeAt(0) > 0xff && !"€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ".includes(c)))].join("");
+}
+
+/** Encrypts finished output again when its input had a password. */
+export async function reprotect(bytes: Uint8Array, password: string): Promise<Uint8Array> {
+  const doc = await load(bytes);
+  doc.encrypt({
+    userPassword: password,
+    ownerPassword: password,
+    permissions: { printing: "highResolution", modifying: true, copying: true, annotating: true, fillingForms: true, contentAccessibility: true, documentAssembly: true },
+  });
+  return doc.save({ useObjectStreams: true });
 }
 
 export function formatBytes(n: number): string {

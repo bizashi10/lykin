@@ -350,5 +350,37 @@ await test("tool registry: search and smart suggestions", () => {
   eq(suggestFor([{ name: "a.pdf" }, { name: "b.pdf" }])[0].id, "merge");
 });
 
+await test("JPEG EXIF orientation is read", async () => {
+  const { jpegOrientation } = await import("../src/lib/exif.ts");
+  const tiff = [0x4d, 0x4d, 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0];
+  const app1 = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff];
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, app1.length + 2, ...app1, 0xff, 0xd9]);
+  eq(jpegOrientation(jpeg), 6);
+  eq(jpegOrientation(new Uint8Array([0xff, 0xd8, 0xff, 0xd9])), 1);
+  eq(jpegOrientation(new Uint8Array([0x89, 0x50])), 1);
+});
+
+await test("results from protected files stay protected", async () => {
+  const out = await T.reprotect(A, "pw");
+  let needs = false;
+  try { await loadSource(out, "x.pdf"); } catch (e) { needs = e instanceof PasswordRequiredError; }
+  assert(needs, "should need a password");
+  eq((await loadSource(out, "x.pdf", "pw")).pageCount, 3);
+});
+
+await test("blank pages follow rotated neighbours", async () => {
+  const d = await PDFDocument.create();
+  d.addPage([842, 595]).setRotation(degrees(90)); // looks portrait
+  d.addPage([595, 842]);
+  const out = await PDFDocument.load(await T.insertBlank(await d.save(), "between"));
+  const b = out.getPage(1);
+  eq([Math.round(b.getWidth()), Math.round(b.getHeight()), b.getRotation().angle], [595, 842, 0]);
+});
+
+await test("repair refuses an empty file with a clear message", async () => {
+  try { await T.resave(new Uint8Array(10)); throw new Error("no"); }
+  catch (e) { assert(/empty/.test((e as Error).message), (e as Error).message); }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

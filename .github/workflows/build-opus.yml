@@ -16,6 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: apps/opus
@@ -41,6 +42,7 @@ jobs:
       # the installer so Opus works fully offline.
       - name: Bundle Ghostscript
         shell: pwsh
+        timeout-minutes: 8
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -49,11 +51,16 @@ jobs:
           if (-not $asset) { throw "No 64-bit Ghostscript installer in release $($rel.tagName)" }
           Write-Host "Bundling $($asset.name) from $($rel.tagName)"
           gh release download $rel.tagName -R ArtifexSoftware/ghostpdl-downloads -p $asset.name -O gs-setup.exe
-          Start-Process -FilePath .\gs-setup.exe -ArgumentList '/S','/D=C:\gs' -Wait
+          # Unpack the installer instead of running it (no UI, can't hang).
+          7z x gs-setup.exe -oC:\gs -y | Out-Null
+          $exe = Get-ChildItem C:\gs -Recurse -Filter gswin64c.exe | Select-Object -First 1
+          $dll = Get-ChildItem C:\gs -Recurse -Filter gsdll64.dll | Select-Object -First 1
+          if (-not $exe -or -not $dll) { Get-ChildItem C:\gs -Recurse | Select-Object -First 40 FullName; throw "Ghostscript files not found in installer" }
           $dest = "src-tauri/resources/gs"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Copy-Item C:\gs\bin\gswin64c.exe, C:\gs\bin\gsdll64.dll -Destination $dest
-          Get-ChildItem C:\gs -Recurse -Include "COPYING*","LICENSE*" | Select-Object -First 1 | Copy-Item -Destination "$dest/LICENSE-Ghostscript.txt"
+          Copy-Item $exe.FullName, $dll.FullName -Destination $dest
+          $lic = Get-ChildItem C:\gs -Recurse -Include "COPYING*","LICENSE*" | Select-Object -First 1
+          if ($lic) { Copy-Item $lic.FullName -Destination "$dest/LICENSE-Ghostscript.txt" }
           & "$dest/gswin64c.exe" --version
           if ($LASTEXITCODE -ne 0) { throw "Ghostscript failed to run" }
 

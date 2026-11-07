@@ -10,6 +10,7 @@ import * as T from "../lib/tools";
 import * as native from "../lib/native";
 import * as platform from "../lib/platform";
 import { prepareImage, previewUrl, pdfToImages, extractImages, isImageName } from "../lib/images";
+import { closeSource } from "../lib/render";
 import { PageCanvas } from "./PageCanvas";
 import { Icon } from "./Icon";
 import { Field, Segmented, Slider, ColorPicker, PositionPicker, Toggle } from "./ui";
@@ -30,14 +31,18 @@ interface Item {
   /** Raw bytes for files that failed to load (Repair only). */
   raw?: Uint8Array;
   wasProtected?: boolean;
+  /** The password the file was opened with, so results stay protected. */
+  password?: string;
 }
 
 interface Output {
   name: string;
   bytes: Uint8Array;
-  kind: "pdf" | "image";
+  kind: "pdf" | "image" | "error";
   note?: string;
   good?: boolean;
+  from?: Item;
+  saved?: boolean;
 }
 
 interface Props {
@@ -48,6 +53,8 @@ interface Props {
   toast: (text: string, tone?: "info" | "error" | "success", action?: { label: string; run: () => void }) => void;
   onBack: () => void;
   engineReady: boolean;
+  /** Tells the app whether there are results that haven't been saved yet. */
+  onUnsavedChange?: (unsaved: boolean) => void;
 }
 
 let uid = 0;
@@ -59,7 +66,7 @@ const SUFFIX: Record<string, string> = {
   crop: "cropped", protect: "protected", unlock: "unlocked", metadata: "edited", remove: "trimmed", extract: "extract",
 };
 
-export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast, onBack, engineReady }: Props) {
+export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast, onBack, engineReady, onUnsavedChange }: Props) {
   const [items, setItems] = useState<Item[]>([]);
   const [outputs, setOutputs] = useState<Output[] | null>(null);
   const [running, setRunning] = useState(false);
@@ -70,6 +77,27 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
   const opts = useToolOptions(tool.id);
   const category = CATEGORIES.find((c) => c.id === tool.category)!;
   const preview = useLivePreview(tool.id, items[0]?.source, opts.values);
+
+  // Results go stale the moment an option changes.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    if (!running) setOutputs(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts.values]);
+
+  const unsaved = !!outputs?.some((o) => o.kind !== "error" && !o.saved);
+  useEffect(() => {
+    onUnsavedChange?.(unsaved);
+  }, [unsaved, onUnsavedChange]);
+
+  // Free the memory used by loaded files when leaving the tool.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  useEffect(() => () => itemsRef.current.forEach((i) => i.source && closeSource(i.source.id)), []);
   const accept = tool.input === "images" ? isImageName : (n: string) => /\.pdf$/i.test(n);
 
   // ---------- adding files ----------
@@ -100,7 +128,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
         const ready: Item[] = loaded.map((l) =>
           "failed" in l
             ? { id: nextId(), name: l.file.name, path: l.file.path, size: l.file.bytes.length, raw: l.file.bytes }
-            : { id: nextId(), name: l.file.name, path: l.file.path, size: l.file.bytes.length, source: l.source, wasProtected: l.password !== undefined || l.source.restrictionsRemoved },
+            : { id: nextId(), name: l.file.name, path: l.file.path, size: l.file.bytes.length, source: l.source, wasProtected: l.password !== undefined || l.source.restrictionsRemoved, password: l.password },
         );
         setItems((cur) => (tool.multiple ? [...cur, ...ready] : ready.slice(0, 1)));
       }
@@ -139,6 +167,8 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
   };
 
   const remove = (id: string) => {
+    const gone = items.find((i) => i.id === id);
+    if (gone?.source) closeSource(gone.source.id);
     setItems((cur) => cur.filter((i) => i.id !== id));
     setOutputs(null);
   };
@@ -164,32 +194,48 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
     setOutputs(null);
     await new Promise((r) => setTimeout(r, 30));
     try {
-      const res = await execute(tool.id, items, opts.values, setProgress);
+      let res = await execute(tool.id, items, opts.values, setProgress);
+      // Keep password protection on results made from protected files.
+      if (tool.id !== "unlock" && tool.id !== "protect") {
+        res = await Promise.all(
+          res.map(async (o) =>
+            o.kind === "pdf" && o.from?.password
+              ? { ...o, bytes: await T.reprotect(o.bytes, o.from.password), note: o.note ? `${o.note} · still protected` : "Still protected" }
+              : o,
+          ),
+        );
+      }
+      const ok = res.filter((o) => o.kind !== "error");
+      if (res.length && !ok.length) throw new Error(res[0].note ?? "Nothing was produced");
       setOutputs(res);
       if (res.length === 0) setError("Nothing was produced. Check the options and try again.");
     } catch (e) {
       console.error(e);
-      setError((e as Error).message || String(e));
+      setError(friendly(e));
     } finally {
       setRunning(false);
       setProgress("");
     }
   };
 
+  const markSaved = (list: Output[]) => setOutputs((cur) => cur?.map((o) => (list.some((l) => l.name === o.name && l.bytes === o.bytes) ? { ...o, saved: true } : o)) ?? null);
   const saveOne = async (o: Output) => {
     try {
       const target = await platform.saveBytes(o.bytes, o.name);
+      if (target) markSaved([o]);
       if (target) toast(`Saved ${platform.fileNameOf(target)}`, "success", platform.isDesktop ? { label: "Show", run: () => platform.showInFolder(target) } : undefined);
     } catch (e) {
       toast((e as Error).message, "error");
     }
   };
   const saveAll = async () => {
-    if (!outputs?.length) return;
+    const good = outputs?.filter((o) => o.kind !== "error") ?? [];
+    if (!good.length) return;
     const folder = await platform.pickFolder();
     if (!folder) return;
     try {
-      const written = await platform.saveManyToFolder(folder, outputs);
+      const written = await platform.saveManyToFolder(folder, good);
+      markSaved(good);
       toast(`Saved ${written.length} files`, "success", platform.isDesktop && written[0] ? { label: "Show", run: () => platform.showInFolder(written[0]) } : undefined);
     } catch (e) {
       toast((e as Error).message, "error");
@@ -197,6 +243,8 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
   };
 
   const totalIn = items.reduce((s, i) => s + i.size, 0);
+  const goodCount = outputs?.filter((o) => o.kind !== "error").length ?? 0;
+  const failedCount = (outputs?.length ?? 0) - goodCount;
   const runLabel = RUN_LABEL[tool.id] ?? tool.name;
 
   return (
@@ -238,24 +286,25 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
               <div className="results-head">
                 <div className="done-mark"><Icon name="check" size={18} /></div>
                 <div>
-                  <h2>{outputs.length === 1 ? "Your file is ready" : `${outputs.length} files are ready`}</h2>
-                  <p>Nothing is saved until you choose where.</p>
+                  <h2>{goodCount === 1 ? "Your file is ready" : `${goodCount} files are ready`}</h2>
+                  <p>{failedCount ? `${failedCount} couldn't be processed — see below.` : unsaved ? "Nothing is saved until you choose where." : "Saved."}</p>
                 </div>
                 <span className="spacer" />
-                {outputs.length > 1 && <button className="primary" onClick={saveAll}><Icon name="folder" size={16} /> Save all to a folder</button>}
-                {outputs.length === 1 && <button className="primary" onClick={() => saveOne(outputs[0])}><Icon name="save" size={16} /> Save</button>}
+                {goodCount > 1 && <button className="primary" onClick={saveAll}><Icon name="folder" size={16} /> Save all to a folder</button>}
+                {goodCount === 1 && <button className="primary" onClick={() => saveOne(outputs.find((o) => o.kind !== "error")!)}><Icon name="save" size={16} /> Save</button>}
               </div>
               <ul className="result-list">
                 {outputs.slice(0, 200).map((o, i) => (
-                  <li key={i} className="result-row">
-                    <Icon name={o.kind === "pdf" ? "file" : "image"} size={18} />
+                  <li key={i} className={`result-row ${o.kind === "error" ? "failed" : ""}`}>
+                    <Icon name={o.kind === "pdf" ? "file" : o.kind === "error" ? "info" : "image"} size={18} />
                     <span className="result-name" title={o.name}>{o.name}</span>
-                    {o.note && <span className={`pill ${o.good ? "green" : ""}`}>{o.note}</span>}
-                    <span className="result-size">{T.formatBytes(o.bytes.length)}</span>
+                    {o.note && <span className={`pill ${o.kind === "error" ? "red" : o.good ? "green" : ""}`}>{o.note}</span>}
+                    {o.kind !== "error" && <span className="result-size">{T.formatBytes(o.bytes.length)}</span>}
+                    {o.saved && <span className="saved-tick" title="Saved"><Icon name="check" size={16} /></span>}
                     {o.kind === "pdf" && (
                       <button className="ghost" onClick={() => onOpenInEditor(o)} title="Open in the page editor">Open</button>
                     )}
-                    {outputs.length > 1 && <button className="ghost" onClick={() => saveOne(o)}>Save</button>}
+                    {goodCount > 1 && o.kind !== "error" && <button className="ghost" onClick={() => saveOne(o)}>Save</button>}
                   </li>
                 ))}
                 {outputs.length > 200 && <li className="result-row muted">…and {outputs.length - 200} more</li>}
@@ -510,19 +559,7 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
               <button className="ghost" onClick={() => set({ pickedPages: Array.from({ length: pageCount }, (_, i) => i).filter((i) => i % 2 === 1) })}>Even</button>
             </div>
           )}
-          <Field label="Or type pages" hint="e.g. 1, 3-5">
-            <input
-              placeholder="1, 3-5"
-              aria-label="Pages"
-              onChange={(e) => {
-                try {
-                  set({ pickedPages: [...new Set(parseRanges(e.target.value, pageCount || 1).flat())] });
-                } catch {
-                  /* wait for valid input */
-                }
-              }}
-            />
-          </Field>
+          <TypedPages pageCount={pageCount} selected={v.pickedPages} onChange={(pickedPages) => set({ pickedPages })} />
           {tool.id === "extract" && <Toggle checked={v.extractSeparate} onChange={(extractSeparate) => set({ extractSeparate })} label="Save each page as its own file" />}
           <div className="count-line">{v.pickedPages.length} of {pageCount} pages selected</div>
         </>
@@ -625,7 +662,7 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
         </>
       );
     case "extract-images":
-      return <Explainer text="Every picture inside the PDF is saved as a PNG file. Tiny decorative images are skipped." />;
+      return <Explainer text="Every picture inside the PDF is saved as its own file — photos as JPG, graphics with transparency as PNG. Tiny decorative images are skipped." />;
     case "pdfa":
       return (
         <Field label="Standard" hint="PDF/A-2b suits almost every archive and court system.">
@@ -670,7 +707,10 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
           </Field>
           {v.wmKind === "text" ? (
             <>
-              <Field label="Text"><input value={v.wmText} onChange={(e) => set({ wmText: e.target.value })} aria-label="Watermark text" /></Field>
+              <Field label="Text">
+                <input value={v.wmText} onChange={(e) => set({ wmText: e.target.value })} aria-label="Watermark text" />
+                {T.unsupportedChars(v.wmText) && <div className="form-error">These characters can't be drawn yet and will show as “?”: {T.unsupportedChars(v.wmText)}</div>}
+              </Field>
               <Field label="Size"><Slider label="Size" value={v.wmSize} min={10} max={140} onChange={(wmSize) => set({ wmSize })} format={(s) => `${s} pt`} /></Field>
               <Field label="Colour"><ColorPicker value={v.color} onChange={(color) => set({ color })} /></Field>
               <Toggle checked={v.wmBold} onChange={(wmBold) => set({ wmBold })} label="Bold" />
@@ -723,6 +763,66 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
     default:
       return null;
   }
+}
+
+/** Text box for page numbers that stays in sync with the thumbnails. */
+function TypedPages({ pageCount, selected, onChange }: { pageCount: number; selected: number[]; onChange: (p: number[]) => void }) {
+  const [text, setText] = useState("");
+  const [err, setErr] = useState("");
+  const typing = useRef(false);
+  useEffect(() => {
+    if (typing.current) return;
+    setText(compactRanges(selected));
+    setErr("");
+  }, [selected]);
+  return (
+    <Field label="Or type pages" hint={err ? undefined : "e.g. 1, 3-5"}>
+      <input
+        value={text}
+        placeholder="1, 3-5"
+        aria-label="Pages"
+        aria-invalid={!!err}
+        onFocus={() => (typing.current = true)}
+        onBlur={() => (typing.current = false)}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (!e.target.value.trim()) {
+            setErr("");
+            onChange([]);
+            return;
+          }
+          try {
+            onChange([...new Set(parseRanges(e.target.value, pageCount || 1).flat())].sort((a, b) => a - b));
+            setErr("");
+          } catch (x) {
+            setErr((x as Error).message);
+            onChange([]);
+          }
+        }}
+      />
+      {err && <div className="form-error">{err}</div>}
+    </Field>
+  );
+}
+
+function compactRanges(pages: number[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    let j = i;
+    while (j + 1 < pages.length && pages[j + 1] === pages[j] + 1) j++;
+    out.push(i === j ? `${pages[i] + 1}` : `${pages[i] + 1}-${pages[j] + 1}`);
+    i = j;
+  }
+  return out.join(", ");
+}
+
+/** Turns technical library errors into plain language. */
+function friendly(e: unknown): string {
+  const msg = (e as Error)?.message ?? String(e);
+  if (/instance of|parse|offset=|Expected|undefined|Cannot read/i.test(msg)) {
+    return "This file is damaged or not a real PDF, so Opus couldn't process it.";
+  }
+  return msg;
 }
 
 function Explainer({ text }: { text: string }) {
@@ -794,17 +894,22 @@ function PagePicker({ source, selected, onChange, mode }: { source: Source; sele
 
 async function execute(id: string, items: Item[], v: Values, progress: (s: string) => void): Promise<Output[]> {
   const pdfOut = (it: Item, bytes: Uint8Array, note?: string, good?: boolean): Output => ({
-    name: `${baseName(it.name)}${SUFFIX[id] ? `-${SUFFIX[id]}` : ""}.pdf`, bytes, kind: "pdf", note, good,
+    name: `${baseName(it.name)}${SUFFIX[id] ? `-${SUFFIX[id]}` : ""}.pdf`, bytes, kind: "pdf", note, good, from: it,
   });
   const map = (s: Source) => new Map([[s.id, s]]);
   const each = async (fn: (it: Item, src: Source) => Promise<Output | Output[]>) => {
     const out: Output[] = [];
     for (let k = 0; k < items.length; k++) {
       const it = items[k];
-      if (!it.source) throw new Error(`${it.name} could not be read`);
       if (items.length > 1) progress(`${k + 1} of ${items.length}…`);
-      const r = await fn(it, it.source);
-      out.push(...(Array.isArray(r) ? r : [r]));
+      try {
+        if (!it.source) throw new Error("This file couldn't be read");
+        const r = await fn(it, it.source);
+        out.push(...(Array.isArray(r) ? r : [r]).map((o) => ({ ...o, from: o.from ?? it })));
+      } catch (e) {
+        // One bad file doesn't spoil the batch: report it and carry on.
+        out.push({ name: it.name, bytes: new Uint8Array(), kind: "error", note: friendly(e) });
+      }
     }
     return out;
   };
@@ -823,7 +928,7 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
       const out: Output[] = [];
       for (let k = 0; k < groups.length; k++) {
         progress(`File ${k + 1} of ${groups.length}…`);
-        out.push({ name: `${baseName(it.name)} - ${describeGroup(groups[k])}.pdf`, bytes: await buildPdf(groups[k].map((i) => ({ ...all[i], key: `${k}-${i}` })), map(src)), kind: "pdf" });
+        out.push({ name: `${baseName(it.name)} - ${describeGroup(groups[k])}.pdf`, bytes: await buildPdf(groups[k].map((i) => ({ ...all[i], key: `${k}-${i}` })), map(src)), kind: "pdf", from: it });
       }
       return out;
     }
@@ -838,7 +943,7 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
       if (!keep.length) throw new Error("You can't remove every page");
       if (id === "extract" && v.extractSeparate) {
         const out: Output[] = [];
-        for (const p of keep) out.push({ name: `${baseName(it.name)} - page ${p.index + 1}.pdf`, bytes: await buildPdf([p], map(src)), kind: "pdf" });
+        for (const p of keep) out.push({ name: `${baseName(it.name)} - page ${p.index + 1}.pdf`, bytes: await buildPdf([p], map(src)), kind: "pdf", from: it });
         return out;
       }
       return [pdfOut(it, await buildPdf(keep, map(src)), `${keep.length} pages`)];
@@ -859,7 +964,8 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
             n++;
           }
         });
-        return pdfOut(it, await buildPdf(pages, map(src)), `${n} turned`);
+        if (n === 0) throw new Error(`No ${v.rotateWhich} pages in this file`);
+        return pdfOut(it, await buildPdf(pages, map(src)), `${n} page${n === 1 ? "" : "s"} turned`);
       });
     case "blank":
       return each(async (it, src) => pdfOut(it, await T.insertBlank(src.bytes, v.blankWhere)));
@@ -877,11 +983,16 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
       const out: Output[] = [];
       for (const it of items) {
         const bytes = it.source?.bytes ?? it.raw!;
-        let fixed: Uint8Array;
-        if (await native.hasEngine()) {
-          fixed = await native.repair(bytes).catch(() => T.resave(bytes));
-        } else fixed = await T.resave(bytes);
-        out.push(pdfOut(it, fixed, "Rebuilt", true));
+        try {
+          if (bytes.length < 64) throw new Error("This file is empty — there is nothing to repair");
+          let fixed: Uint8Array;
+          if (await native.hasEngine()) {
+            fixed = await native.repair(bytes).catch(() => T.resave(bytes));
+          } else fixed = await T.resave(bytes);
+          out.push(pdfOut(it, fixed, "Rebuilt", true));
+        } catch (e) {
+          out.push({ name: it.name, bytes: new Uint8Array(), kind: "error", note: friendly(e) });
+        }
       }
       return out;
     }
@@ -906,7 +1017,7 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
       const imgs = items.map((i) => i.image!).filter(Boolean);
       progress("Building PDF…");
       const bytes = await T.imagesToPdf(imgs, { pageSize: v.pageSize, orientation: v.orientation, marginMm: v.margin });
-      return [{ name: `${baseName(items[0].name)}${imgs.length > 1 ? "-and-more" : ""}.pdf`, bytes, kind: "pdf", note: `${imgs.length} page${imgs.length === 1 ? "" : "s"}` }];
+      return [{ name: `${items[0].name.replace(/\.[a-z0-9]+$/i, "")}${imgs.length > 1 ? "-and-more" : ""}.pdf`, bytes, kind: "pdf", note: `${imgs.length} page${imgs.length === 1 ? "" : "s"}` }];
     }
     case "extract-images":
       return each(async (it, src) => {
@@ -981,7 +1092,12 @@ function useLivePreview(toolId: string, src: Source | undefined, v: Values): Sou
           out = await buildPdf(p, new Map([[s1.id, s1]]));
         }
         const loaded = await loadSource(out, "preview.pdf");
-        if (alive) setPreview(loaded);
+        if (alive) {
+          setPreview((old) => {
+            if (old) setTimeout(() => closeSource(old.id), 1000);
+            return loaded;
+          });
+        }
       } catch {
         if (alive) setPreview(null);
       }
