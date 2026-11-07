@@ -1,7 +1,7 @@
 {
   "name": "lykin-opus",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-ocr-assets.mjs && vite",

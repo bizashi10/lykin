@@ -4,7 +4,7 @@ A personal, offline office suite for Windows. No ads, no account — files never
 
 | App | Replaces | Colour | Status |
 |---|---|---|---|
-| **Opus** | Adobe Acrobat (PDF) | Red | v0.3 — 25 tools + editor |
+| **Opus** | Adobe Acrobat (PDF) | Red | v0.4 — 28 tools, editor, OCR, conversions |
 | **Prose** | Microsoft Word | Blue | planned |
 | **Ordo** | Microsoft Excel | Green | planned |
 | **Podium** | Microsoft PowerPoint | Orange | planned |
@@ -24,6 +24,9 @@ click **More info → Run anyway**.
 - **Organize:** merge, split, organize pages (drag, rotate, delete), remove pages, extract pages, rotate, insert blank pages, reverse order
 - **Optimize:** compress (3 levels), repair, grayscale, flatten forms, edit properties
 - **Convert:** PDF to JPG/PNG, images to PDF (phone photos auto-rotated), extract images, PDF/A-1b/2b/3b
+- **OCR:** make scanned PDFs searchable and copyable, offline (bundled Tesseract); optional .txt export
+- **Compare:** side-by-side visual + text diff of two PDFs
+- **Office conversions:** Word/Excel/PowerPoint → PDF, and PDF → Word/PowerPoint (uses LibreOffice; see note)
 - **Edit:** page numbers, text or image watermark, crop — with live preview
 - **Full editor:** add text, notes, freehand drawing, highlights, lines, arrows, rectangles, ellipses, images and signatures; fill form fields; **true redaction** that removes the hidden content, not just covers it
 - **Protect:** password-protect (AES-256), unlock (known password, or print/copy/edit restrictions)
@@ -39,7 +42,9 @@ click **More info → Run anyway**.
 - PDFs dropped onto the window from Explorer open fine, but Save will ask where to save.
 - Redaction flattens affected pages to images (so the hidden data is truly gone); other pages keep their text.
 - Editor text uses built-in fonts: non-Latin letters show as "?".
-- Not yet built: live text re-flow editing, OCR, compare, Word/Excel/PowerPoint conversion, AI.
+- **Office conversions need LibreOffice** (free, open-source) installed on the PC — Opus detects it automatically and runs it locally (still fully offline). If it isn't installed, those tools show a one-line prompt to get it from libreoffice.org. All other tools need nothing extra.
+- OCR and watermark/page-number text are English/Latin only for now (non-Latin shows as "?").
+- Not yet built: live text re-flow editing, PDF→Excel, and the offline AI (summarize, chat-with-PDF, translate).
 - Watermarks and page numbers use built-in fonts: non-Latin letters print as "?".
 
 ## For developers

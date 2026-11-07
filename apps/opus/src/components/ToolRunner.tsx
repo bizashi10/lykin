@@ -10,6 +10,7 @@ import * as T from "../lib/tools";
 import * as native from "../lib/native";
 import { ocrToSearchablePdf } from "../lib/ocr";
 import { comparePdfs } from "../lib/compare";
+import { officeToPdf, pdfToWord, pdfToPowerpoint, isOfficeName } from "../lib/office";
 import * as platform from "../lib/platform";
 import { prepareImage, previewUrl, pdfToImages, extractImages, isImageName } from "../lib/images";
 import { closeSource } from "../lib/render";
@@ -57,6 +58,7 @@ interface Props {
   toast: (text: string, tone?: "info" | "error" | "success", action?: { label: string; run: () => void }) => void;
   onBack: () => void;
   engineReady: boolean;
+  officeReady: boolean;
   /** Tells the app whether there are results that haven't been saved yet. */
   onUnsavedChange?: (unsaved: boolean) => void;
 }
@@ -70,7 +72,7 @@ const SUFFIX: Record<string, string> = {
   crop: "cropped", protect: "protected", unlock: "unlocked", metadata: "edited", remove: "trimmed", extract: "extract",
 };
 
-export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast, onBack, engineReady, onUnsavedChange }: Props) {
+export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast, onBack, engineReady, officeReady, onUnsavedChange }: Props) {
   const [items, setItems] = useState<Item[]>([]);
   const [outputs, setOutputs] = useState<Output[] | null>(null);
   const [running, setRunning] = useState(false);
@@ -102,7 +104,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
   const itemsRef = useRef(items);
   itemsRef.current = items;
   useEffect(() => () => itemsRef.current.forEach((i) => i.source && closeSource(i.source.id)), []);
-  const accept = tool.input === "images" ? isImageName : (n: string) => /\.pdf$/i.test(n);
+  const accept = tool.input === "office" ? isOfficeName : tool.input === "images" ? isImageName : (n: string) => /\.pdf$/i.test(n);
 
   // ---------- adding files ----------
   const addFiles = async (files: platform.PickedFile[]) => {
@@ -116,7 +118,10 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
     setError("");
     setLoading(true);
     try {
-      if (tool.input === "images") {
+      if (tool.input === "office") {
+        const ready: Item[] = limited.map((f) => ({ id: nextId(), name: f.name, path: f.path, size: f.bytes.length, raw: f.bytes }));
+        setItems((cur) => (tool.multiple ? [...cur, ...ready] : ready.slice(0, 1)));
+      } else if (tool.input === "images") {
         const ready: Item[] = [];
         for (const f of limited) {
           try {
@@ -150,6 +155,22 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
   }, []);
 
   const pick = async () => {
+    if (tool.input === "office") {
+      if (platform.isDesktop) {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const chosen = await open({ multiple: tool.multiple, filters: [{ name: "Documents", extensions: ["doc","docx","odt","rtf","txt","xls","xlsx","ods","csv","ppt","pptx","odp"] }] });
+        if (!chosen) return;
+        const paths = Array.isArray(chosen) ? chosen : [chosen];
+        addFiles(await Promise.all(paths.map(platform.readPath)));
+      } else {
+        const input = document.createElement("input");
+        input.type = "file"; input.multiple = tool.multiple;
+        input.accept = ".doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp";
+        input.onchange = async () => addFiles(await Promise.all(Array.from(input.files ?? []).map(platform.fromBrowserFile)));
+        input.click();
+      }
+      return;
+    }
     if (tool.input === "images") {
       if (platform.isDesktop) {
         const { open } = await import("@tauri-apps/plugin-dialog");
@@ -188,7 +209,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
   const dragId = useRef<string | null>(null);
 
   // ---------- running ----------
-  const needsEngine = tool.engine && !engineReady;
+  const needsEngine = (tool.engine && !engineReady) || (tool.office && !officeReady);
   const single = items[0];
   const canRun = items.length > 0 && !running && !needsEngine && (tool.mode !== "combine" || items.length >= 2) && (tool.id !== "compare" || items.length === 2);
 
@@ -312,7 +333,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
                     {o.note && <span className={`pill ${o.kind === "error" ? "red" : o.good ? "green" : ""}`}>{o.note}</span>}
                     {o.kind !== "error" && <span className="result-size">{T.formatBytes(o.bytes.length)}</span>}
                     {o.saved && <span className="saved-tick" title="Saved"><Icon name="check" size={16} /></span>}
-                    {o.kind === "pdf" && (
+                    {o.kind === "pdf" && /\.pdf$/i.test(o.name) && (
                       <button className="ghost" onClick={() => openResult(o)} title="Open in the page editor">Open</button>
                     )}
                     {goodCount > 1 && o.kind !== "error" && <button className="ghost" onClick={() => saveOne(o)}>Save</button>}
@@ -324,9 +345,9 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
           )}
           {items.length === 0 ? (
             <button className={`dropzone ${dragOver ? "over" : ""}`} onClick={pick} disabled={loading}>
-              <Icon name={tool.input === "images" ? "image-plus" : "upload"} size={34} />
-              <strong>{loading ? "Reading files…" : tool.input === "images" ? "Choose images" : tool.multiple ? "Choose PDF files" : "Choose a PDF"}</strong>
-              <span>or drop {tool.input === "images" ? "images" : tool.multiple ? "PDFs" : "a PDF"} here</span>
+              <Icon name={tool.input === "images" ? "image-plus" : tool.input === "office" ? "file" : "upload"} size={34} />
+              <strong>{loading ? "Reading files…" : tool.input === "office" ? "Choose documents" : tool.input === "images" ? "Choose images" : tool.multiple ? "Choose PDF files" : "Choose a PDF"}</strong>
+              <span>or drop {tool.input === "office" ? "Word, Excel or PowerPoint files" : tool.input === "images" ? "images" : tool.multiple ? "PDFs" : "a PDF"} here</span>
             </button>
           ) : (
             <>
@@ -382,13 +403,13 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
                         ) : it.source ? (
                           <PageCanvas source={it.source} index={0} rotation={0} width={tool.input === "images" ? 120 : 52} preload={200} />
                         ) : (
-                          <div className="thumb-broken"><Icon name="repair" /></div>
+                          <div className="thumb-broken"><Icon name={tool.input === "office" ? "file" : "repair"} /></div>
                         )}
                       </div>
                       <div className="file-meta">
                         <div className="file-name" title={it.name}>{tool.mode === "combine" && <span className="order">{idx + 1}</span>}{it.name}</div>
                         <div className="file-sub">
-                          {it.source ? `${it.source.pageCount} page${it.source.pageCount === 1 ? "" : "s"} · ` : it.image ? `${it.image.width}×${it.image.height} · ` : "Damaged · "}
+                          {it.source ? `${it.source.pageCount} page${it.source.pageCount === 1 ? "" : "s"} · ` : it.image ? `${it.image.width}×${it.image.height} · ` : tool.input === "office" ? "" : "Damaged · "}
                           {T.formatBytes(it.size)}
                           {it.lock === "password" && <span className="pill gold"><Icon name="lock" size={11} /> password entered</span>}
                           {it.lock === "restrictions" && <span className="pill gold"><Icon name="lock" size={11} /> had restrictions</span>}
@@ -428,7 +449,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
             {needsEngine && (
               <div className="notice">
                 <Icon name="info" size={16} />
-                <span>{platform.isDesktop ? "The PDF engine wasn't found. Reinstall Opus to restore it." : "This tool runs in the installed Opus app."}</span>
+                <span>{!platform.isDesktop ? "This tool runs in the installed Opus app." : tool.office ? "This conversion uses LibreOffice — free, open-source, and runs entirely on your PC. Install it from libreoffice.org, then restart Opus." : "The PDF engine wasn't found. Reinstall Opus to restore it."}</span>
               </div>
             )}
           </div>
@@ -454,7 +475,7 @@ const RUN_LABEL: Record<string, string> = {
   blank: "Insert pages", reverse: "Reverse pages", compress: "Compress", repair: "Repair", grayscale: "Convert to grayscale",
   flatten: "Flatten forms", metadata: "Save properties", "pdf-to-image": "Convert to images", "image-to-pdf": "Create PDF",
   "extract-images": "Extract images", pdfa: "Convert to PDF/A", "page-numbers": "Add page numbers", watermark: "Add watermark",
-  crop: "Crop pages", protect: "Protect", unlock: "Unlock", ocr: "Make searchable", compare: "Compare",
+  crop: "Crop pages", protect: "Protect", unlock: "Unlock", ocr: "Make searchable", compare: "Compare", "office-to-pdf": "Convert to PDF", "pdf-to-word": "Convert to Word", "pdf-to-powerpoint": "Convert to PowerPoint",
 };
 
 const isPagePicker = (id: string) => id === "remove" || id === "extract";
@@ -937,6 +958,21 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
     name: `${baseName(it.name)}${SUFFIX[id] ? `-${SUFFIX[id]}` : ""}.pdf`, bytes, kind: "pdf", note, good, from: it,
   });
   const map = (s: Source) => new Map([[s.id, s]]);
+  const each2 = async (fn: (it: Item) => Promise<Output | Output[]>) => {
+    const out: Output[] = [];
+    for (let k = 0; k < items.length; k++) {
+      const it = items[k];
+      if (items.length > 1) progress(`${k + 1} of ${items.length}…`);
+      try {
+        if (!it.raw) throw new Error("This file couldn't be read");
+        const r = await fn(it);
+        out.push(...(Array.isArray(r) ? r : [r]));
+      } catch (e) {
+        out.push({ name: it.name, bytes: new Uint8Array(), kind: "error", note: friendly(e) });
+      }
+    }
+    return out;
+  };
   const each = async (fn: (it: Item, src: Source) => Promise<Output | Output[]>) => {
     const out: Output[] = [];
     for (let k = 0; k < items.length; k++) {
@@ -1113,6 +1149,12 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
         if (v.ocrText && r.text.trim()) outs.push({ name: `${baseName(it.name)}.txt`, bytes: new TextEncoder().encode(r.text), kind: "pdf", note: "text", from: it });
         return outs;
       });
+    case "office-to-pdf":
+      return each2(async (it) => ({ name: `${baseName(it.name)}.pdf`, bytes: await officeToPdf(it.raw!, it.name), kind: "pdf", note: "Converted", good: true, from: it }));
+    case "pdf-to-word":
+      return each(async (it, src) => ({ name: `${baseName(it.name)}.docx`, bytes: await pdfToWord(src.bytes), kind: "pdf", note: "Word", good: true, from: it }));
+    case "pdf-to-powerpoint":
+      return each(async (it, src) => ({ name: `${baseName(it.name)}.pptx`, bytes: await pdfToPowerpoint(src.bytes), kind: "pdf", note: "PowerPoint", good: true, from: it }));
     default:
       throw new Error("This tool isn't available yet");
   }

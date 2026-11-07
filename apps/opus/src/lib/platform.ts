@@ -60,6 +60,8 @@ function typeOf(name: string): { mime: string; ext: string; filter: { name: stri
   if (ext === "jpg" || ext === "jpeg") return { mime: "image/jpeg", ext: "jpg", filter: [{ name: "JPEG image", extensions: ["jpg", "jpeg"] }] };
   if (ext === "png") return { mime: "image/png", ext: "png", filter: [{ name: "PNG image", extensions: ["png"] }] };
   if (ext === "txt") return { mime: "text/plain", ext: "txt", filter: [{ name: "Text file", extensions: ["txt"] }] };
+  const office: Record<string, string> = { docx: "Word document", pptx: "PowerPoint", xlsx: "Excel workbook" };
+  if (office[ext]) return { mime: "application/octet-stream", ext, filter: [{ name: office[ext], extensions: [ext] }] };
   return { mime: "application/pdf", ext: "pdf", filter: PDF_FILTER };
 }
 

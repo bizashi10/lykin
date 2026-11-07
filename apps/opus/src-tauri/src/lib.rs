@@ -306,6 +306,143 @@ fn run_ghostscript(app: tauri::AppHandle, request: Request<'_>) -> Result<Respon
     out.map(Response::new)
 }
 
+/// Finds the bundled LibreOffice (Windows) or a system one (development/Linux).
+static SOFFICE_PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+fn soffice_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    SOFFICE_PATH.get_or_init(|| find_soffice(app)).clone()
+}
+fn find_soffice(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if let Some(res) = resources(app) {
+        for rel in [
+            "libreoffice/program/soffice.exe",
+            "libreoffice/program/soffice.bin",
+            "libreoffice/program/soffice",
+        ] {
+            let p = res.join(rel);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    // Standard install locations (Windows, macOS, Linux).
+    #[cfg(target_os = "windows")]
+    let candidates: Vec<PathBuf> = {
+        let mut v = Vec::new();
+        for env_key in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+            if let Ok(base) = std::env::var(env_key) {
+                v.push(PathBuf::from(base).join("LibreOffice/program/soffice.exe"));
+            }
+        }
+        v.push(PathBuf::from("C:/Program Files/LibreOffice/program/soffice.exe"));
+        v
+    };
+    #[cfg(not(target_os = "windows"))]
+    let candidates: Vec<PathBuf> = vec![
+        PathBuf::from("/usr/bin/soffice"),
+        PathBuf::from("/usr/local/bin/soffice"),
+        PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+        PathBuf::from("/opt/libreoffice/program/soffice"),
+    ];
+    for p in candidates {
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    for name in ["soffice", "libreoffice"] {
+        if quiet(std::process::Command::new(name).arg("--version")).output().map(|o| o.status.success()).unwrap_or(false) {
+            return Some(PathBuf::from(name));
+        }
+    }
+    None
+}
+
+#[tauri::command(async)]
+fn has_soffice(app: tauri::AppHandle) -> bool {
+    soffice_path(&app).is_some()
+}
+
+/// Converts a document with LibreOffice. The `x-op` header holds a JSON object:
+/// { "in_ext": "docx", "out_ext": "pdf", "convert_to": "pdf", "infilter": "..." }.
+#[tauri::command(async)]
+fn run_soffice(app: tauri::AppHandle, request: Request<'_>) -> Result<Response, String> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("No file data received".into());
+    };
+    let header = request
+        .headers()
+        .get("x-op")
+        .ok_or("No conversion details given")?
+        .to_str()
+        .map_err(|e| e.to_string())?;
+    let spec: serde_json::Value = serde_json::from_str(header).map_err(|e| format!("Bad conversion details: {e}"))?;
+    let in_ext = spec.get("in_ext").and_then(|v| v.as_str()).unwrap_or("pdf");
+    let out_ext = spec.get("out_ext").and_then(|v| v.as_str()).unwrap_or("pdf");
+    let convert_to = spec.get("convert_to").and_then(|v| v.as_str()).unwrap_or("pdf");
+    let infilter = spec.get("infilter").and_then(|v| v.as_str());
+
+    let soffice = soffice_path(&app).ok_or("The document converter (LibreOffice) is not installed. Reinstall Opus, or install LibreOffice.")?;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("opus-lo-{stamp}"));
+    let outdir = dir.join("out");
+    let profile = dir.join("profile");
+    std::fs::create_dir_all(&outdir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
+    let cleanup = |d: &Path| { let _ = std::fs::remove_dir_all(d); };
+    let input = dir.join(format!("input.{in_ext}"));
+    if let Err(e) = std::fs::write(&input, bytes) {
+        cleanup(&dir);
+        return Err(e.to_string());
+    }
+
+    // LibreOffice wants the profile path as a file:// URL.
+    let profile_url = {
+        let p = profile.to_string_lossy().replace('\\', "/");
+        if p.starts_with('/') { format!("file://{p}") } else { format!("file:///{p}") }
+    };
+    let mut cmd = std::process::Command::new(&soffice);
+    quiet(&mut cmd)
+        .arg("--headless").arg("--norestore").arg("--nolockcheck").arg("--nodefault")
+        .arg(format!("-env:UserInstallation={profile_url}"));
+    if let Some(f) = infilter {
+        cmd.arg(format!("--infilter={f}"));
+    }
+    cmd.arg("--convert-to").arg(convert_to)
+        .arg("--outdir").arg(&outdir)
+        .arg(&input)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let result = (|| -> Result<Vec<u8>, String> {
+        let mut child = cmd.spawn().map_err(|e| format!("Could not start the converter: {e}"))?;
+        let started = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if started.elapsed() > std::time::Duration::from_secs(300) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("The converter took too long and was stopped.".into());
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(60)),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        let expected = outdir.join(format!("input.{out_ext}"));
+        if expected.exists() {
+            std::fs::read(&expected).map_err(|e| e.to_string())
+        } else {
+            // Find any produced file as a fallback.
+            let produced = std::fs::read_dir(&outdir).ok().and_then(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.is_file()));
+            match produced {
+                Some(p) => std::fs::read(&p).map_err(|e| e.to_string()),
+                None => Err("The converter could not read this file. It may be password-protected or in an unsupported layout.".into()),
+            }
+        }
+    })();
+    cleanup(&dir);
+    result.map(Response::new)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -329,7 +466,9 @@ pub fn run() {
             startup_files,
             show_in_folder,
             has_ghostscript,
-            run_ghostscript
+            run_ghostscript,
+            has_soffice,
+            run_soffice
         ])
         .run(tauri::generate_context!())
         .expect("error while running Opus");

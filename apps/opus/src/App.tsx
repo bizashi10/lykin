@@ -8,6 +8,7 @@ import { ToolRunner, type LoadedPdf } from "./components/ToolRunner";
 import { TOOLS, type ToolDef } from "./tools/registry";
 import { addRecent, forgetRecent, loadRecents, loadTheme, saveTheme, type Recent, type Theme } from "./lib/recents";
 import { hasEngine } from "./lib/native";
+import { hasOffice } from "./lib/office";
 import { isImageName } from "./lib/images";
 import { Annotate } from "./components/Annotate";
 import { type Anno, type ImageStore, hasRedaction } from "./lib/annots";
@@ -82,8 +83,10 @@ export default function App() {
   const [recents, setRecents] = useState<Recent[]>(() => loadRecents());
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [engineReady, setEngineReady] = useState(false);
+  const [officeReady, setOfficeReady] = useState(false);
   useEffect(() => {
     hasEngine().then(setEngineReady);
+    hasOffice().then(setOfficeReady);
   }, []);
   // Editor: embedded image/signature bytes, and detected form fields.
   const [images, setImages] = useState<ImageStore>({});
@@ -782,6 +785,7 @@ export default function App() {
           initialFiles={screen.files}
           loadPdfs={loadForTool}
           engineReady={engineReady}
+          officeReady={officeReady}
           toast={toast}
           onUnsavedChange={(u) => {
             toolUnsaved.current = u;

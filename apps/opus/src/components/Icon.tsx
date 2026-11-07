@@ -53,6 +53,7 @@ const paths: Record<string, string> = {
   monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
   tools: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM16.5 13v7M13 16.5h7",
   cursor: "M5 3l15 7-6 2-2 6z",
+  slides: "M4 4h16v12H4zM9 20h6M12 16v4",
   text: "M5 5h14M12 5v14M9 19h6",
   note: "M5 4h14v10l-5 5H5zM14 19v-5h5",
   highlight: "M4 20h16M6 16l8-8 4 4-8 8H6zM13 7l2-3 4 4-3 2",

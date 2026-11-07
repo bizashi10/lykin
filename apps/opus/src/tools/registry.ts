@@ -10,13 +10,15 @@ export interface ToolDef {
   category: Category;
   icon: string;
   /** What the tool takes. */
-  input: "pdf" | "images";
+  input: "pdf" | "images" | "office";
   /** Many files at once? (each processed separately, or combined) */
   multiple: boolean;
   /** "batch" = one result per file; "combine" = one result from all; "editor" = opens the page editor. */
   mode: "batch" | "combine" | "editor" | "single";
   /** Needs the bundled PDF engine (desktop app). */
   engine?: boolean;
+  /** Needs the bundled document converter (LibreOffice, desktop app). */
+  office?: boolean;
   /** Not built yet: shown as coming soon. */
   soon?: boolean;
   keywords?: string;
@@ -53,9 +55,10 @@ export const TOOLS: ToolDef[] = [
   { id: "image-to-pdf", name: "Images to PDF", blurb: "Turn photos, scans and screenshots into one PDF.", category: "convert", icon: "image-plus", input: "images", multiple: true, mode: "combine", keywords: "jpg jpeg png photo picture scan" },
   { id: "extract-images", name: "Extract images", blurb: "Pull out every picture embedded in a PDF.", category: "convert", icon: "images", input: "pdf", multiple: true, mode: "batch", keywords: "pictures photos get" },
   { id: "pdfa", name: "PDF to PDF/A", blurb: "Convert to the long-term archive standard.", category: "convert", icon: "archive", input: "pdf", multiple: true, mode: "batch", engine: true, keywords: "archive iso long term" },
-  { id: "pdf-to-word", name: "PDF to Word", blurb: "Editable Word document from a PDF.", category: "convert", icon: "file", input: "pdf", multiple: true, mode: "batch", soon: true, keywords: "docx doc" },
+  { id: "pdf-to-word", name: "PDF to Word", blurb: "Editable Word document from a PDF (layout approximate).", category: "convert", icon: "file", input: "pdf", multiple: true, mode: "batch", office: true, keywords: "docx doc word" },
   { id: "pdf-to-excel", name: "PDF to Excel", blurb: "Pull tables into a spreadsheet.", category: "convert", icon: "table", input: "pdf", multiple: true, mode: "batch", soon: true, keywords: "xlsx table" },
-  { id: "office-to-pdf", name: "Office to PDF", blurb: "Word, Excel and PowerPoint files to PDF.", category: "convert", icon: "file", input: "pdf", multiple: true, mode: "batch", soon: true, keywords: "docx xlsx pptx" },
+  { id: "office-to-pdf", name: "Office to PDF", blurb: "Word, Excel, PowerPoint and OpenDocument files to PDF.", category: "convert", icon: "file", input: "office", multiple: true, mode: "batch", office: true, keywords: "docx xlsx pptx word excel powerpoint odt convert" },
+  { id: "pdf-to-powerpoint", name: "PDF to PowerPoint", blurb: "One editable slide per PDF page (layout approximate).", category: "convert", icon: "slides", input: "pdf", multiple: true, mode: "batch", office: true, keywords: "pptx powerpoint slides" },
   { id: "ocr", name: "OCR scans", blurb: "Make scanned pages searchable and copyable, offline.", category: "convert", icon: "scan", input: "pdf", multiple: true, mode: "batch", keywords: "text recognition scanned searchable tesseract extract" },
 
   // Edit
