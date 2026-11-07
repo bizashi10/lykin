@@ -251,14 +251,16 @@ export default function App() {
       setScreen({ kind: "editor" });
       setDropped(null);
       loaded.forEach((l) => remember(l.file.path, l.file.name));
-      // Detect fillable form fields (single file only, used by the editor).
+      // Detect fillable form fields (single file only, used by the editor), and
+      // seed the editor with any values the form already contains so they show.
       let form: Record<string, string> = {};
       setFormInfo(null);
       if (single) {
-        readForm(loaded[0].source).then((info) => {
-          setFormInfo(info.fields.length ? info : null);
-        }).catch(() => setFormInfo(null));
-        form = {};
+        const info = await readForm(loaded[0].source).catch(() => null);
+        if (info?.fields.length) {
+          setFormInfo(info);
+          form = info.values;
+        }
       }
       const next: Doc = { pages, password: single ? (loaded[0].password ?? null) : null, annos: {}, form };
       history.reset(next);
