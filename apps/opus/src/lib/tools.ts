@@ -306,7 +306,8 @@ export async function imagesToPdf(images: ImageInput[], o: ImagesToPdfOptions): 
 
 /** Re-saves a PDF through pdf-lib's tolerant parser (fixes many broken files). */
 export async function resave(bytes: Uint8Array): Promise<Uint8Array> {
-  if (bytes.length < 64) throw new Error("This file is empty — there is nothing to repair");
+  if (bytes.length === 0) throw new Error("This file is empty — there is nothing to repair");
+  if (!new TextDecoder("latin1").decode(bytes.subarray(0, 1024)).includes("%PDF")) throw new Error("This isn't a PDF file, so it can't be repaired");
   let doc: PDFDocument;
   try {
     doc = await load(bytes);

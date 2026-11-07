@@ -4,7 +4,7 @@ A personal, offline office suite for Windows. No ads, no account — files never
 
 | App | Replaces | Colour | Status |
 |---|---|---|---|
-| **Opus** | Adobe Acrobat (PDF) | Red | v0.1 in progress |
+| **Opus** | Adobe Acrobat (PDF) | Red | v0.2 — 21 tools |
 | **Prose** | Microsoft Word | Blue | planned |
 | **Ordo** | Microsoft Excel | Green | planned |
 | **Podium** | Microsoft PowerPoint | Orange | planned |
@@ -18,16 +18,17 @@ A personal, offline office suite for Windows. No ads, no account — files never
 Windows may show "Windows protected your PC" because the installer isn't signed yet:
 click **More info → Run anyway**.
 
-## Opus v0.1 features
+## Opus v0.2 features
 
-- View PDFs (page sidebar, zoom, go to page, find text)
-- Organize: drag to reorder, rotate, delete pages, undo/redo
-- Merge several PDFs; add pages from another PDF
-- Split by ranges, every N pages, or one file per page
-- Extract selected pages to a new PDF
-- Password-protect (AES-256), change or remove a password
-- `Ctrl+K` command bar
-- Opens PDFs double-clicked in Explorer
+- **Home:** type what you want ("compress", "password"…), or drop files anywhere for suggestions. Recent files, light/dark theme, `Ctrl+K` command bar.
+- **Organize:** merge, split, organize pages (drag, rotate, delete), remove pages, extract pages, rotate, insert blank pages, reverse order
+- **Optimize:** compress (3 levels), repair, grayscale, flatten forms, edit properties
+- **Convert:** PDF to JPG/PNG, images to PDF (phone photos auto-rotated), extract images, PDF/A-1b/2b/3b
+- **Edit:** page numbers, text or image watermark, crop — with live preview
+- **Protect:** password-protect (AES-256), unlock (known password, or print/copy/edit restrictions)
+- Batch processing: most tools take many files at once
+- Results from password-protected files stay protected
+- Bundled Ghostscript engine (AGPL, source at https://ghostscript.com) — fully offline
 
 ## Known limitations (v0.1)
 
@@ -35,7 +36,8 @@ click **More info → Run anyway**.
   internal links — Opus asks before saving when that would happen.
 - A file with separate open and owner passwords is saved with one password (no restrictions).
 - PDFs dropped onto the window from Explorer open fine, but Save will ask where to save.
-- Not yet built: compress, OCR, annotations, fill & sign, redaction, conversion, AI.
+- Not yet built: edit text/annotate, sign, redact, OCR, compare, Word/Excel/PowerPoint conversion, AI.
+- Watermarks and page numbers use built-in fonts: non-Latin letters print as "?".
 
 ## For developers
 

@@ -67,7 +67,7 @@ export const TOOLS: ToolDef[] = [
 
   // Secure
   { id: "protect", name: "Protect PDF", blurb: "Lock files with a password and AES-256 encryption.", category: "secure", icon: "lock", input: "pdf", multiple: true, mode: "batch", keywords: "password encrypt secure" },
-  { id: "unlock", name: "Unlock PDF", blurb: "Remove a password you know from a PDF.", category: "secure", icon: "unlock", input: "pdf", multiple: true, mode: "batch", keywords: "remove password decrypt" },
+  { id: "unlock", name: "Unlock PDF", blurb: "Remove a known password or print, copy and edit restrictions.", category: "secure", icon: "unlock", input: "pdf", multiple: true, mode: "batch", keywords: "remove password decrypt locked restrictions permissions owner print copy edit secured" },
   { id: "sign", name: "Sign PDF", blurb: "Draw, type or upload your signature.", category: "secure", icon: "signature", input: "pdf", multiple: false, mode: "editor", soon: true, keywords: "signature" },
   { id: "redact", name: "Redact", blurb: "Permanently black out private information.", category: "secure", icon: "redact", input: "pdf", multiple: false, mode: "editor", soon: true, keywords: "censor hide black out" },
 ];

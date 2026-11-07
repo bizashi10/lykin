@@ -457,6 +457,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 .field-label { font-weight: 600; font-size: 13px; }
 .field-hint { color: var(--text-3); font-size: 12px; }
 .field-hint.center { text-align: center; }
+.field-hint.warn { color: var(--gold); }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .explainer { margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.55; }
 .count-line { color: var(--text-2); font-size: 13px; }

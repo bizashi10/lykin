@@ -33,6 +33,8 @@ interface Item {
   wasProtected?: boolean;
   /** The password the file was opened with, so results stay protected. */
   password?: string;
+  /** How the file was locked when it was added. */
+  lock?: "password" | "restrictions" | "none";
 }
 
 interface Output {
@@ -128,7 +130,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
         const ready: Item[] = loaded.map((l) =>
           "failed" in l
             ? { id: nextId(), name: l.file.name, path: l.file.path, size: l.file.bytes.length, raw: l.file.bytes }
-            : { id: nextId(), name: l.file.name, path: l.file.path, size: l.file.bytes.length, source: l.source, wasProtected: l.password !== undefined || l.source.restrictionsRemoved, password: l.password },
+            : { id: nextId(), name: l.file.name, path: l.file.path, size: l.file.bytes.length, source: l.source, wasProtected: l.password !== undefined || l.source.restrictionsRemoved, password: l.password, lock: l.password !== undefined ? "password" : l.source.restrictionsRemoved ? "restrictions" : "none" },
         );
         setItems((cur) => (tool.multiple ? [...cur, ...ready] : ready.slice(0, 1)));
       }
@@ -218,6 +220,13 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
     }
   };
 
+  /** Opening a result is fine; only ask if *other* results would be lost. */
+  const openResult = async (o: Output) => {
+    const others = outputs?.filter((x) => x !== o && x.kind !== "error" && !x.saved).length ?? 0;
+    if (others && !(await platform.confirm(`${others} other result${others === 1 ? " hasn't" : "s haven't"} been saved. Open this one anyway?`))) return;
+    onUnsavedChange?.(false);
+    onOpenInEditor(o);
+  };
   const markSaved = (list: Output[]) => setOutputs((cur) => cur?.map((o) => (list.some((l) => l.name === o.name && l.bytes === o.bytes) ? { ...o, saved: true } : o)) ?? null);
   const saveOne = async (o: Output) => {
     try {
@@ -302,7 +311,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
                     {o.kind !== "error" && <span className="result-size">{T.formatBytes(o.bytes.length)}</span>}
                     {o.saved && <span className="saved-tick" title="Saved"><Icon name="check" size={16} /></span>}
                     {o.kind === "pdf" && (
-                      <button className="ghost" onClick={() => onOpenInEditor(o)} title="Open in the page editor">Open</button>
+                      <button className="ghost" onClick={() => openResult(o)} title="Open in the page editor">Open</button>
                     )}
                     {goodCount > 1 && o.kind !== "error" && <button className="ghost" onClick={() => saveOne(o)}>Save</button>}
                   </li>
@@ -379,7 +388,9 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
                         <div className="file-sub">
                           {it.source ? `${it.source.pageCount} page${it.source.pageCount === 1 ? "" : "s"} · ` : it.image ? `${it.image.width}×${it.image.height} · ` : "Damaged · "}
                           {T.formatBytes(it.size)}
-                          {it.wasProtected && <span className="pill gold"><Icon name="lock" size={11} /> unlocked</span>}
+                          {it.lock === "password" && <span className="pill gold"><Icon name="lock" size={11} /> password entered</span>}
+                          {it.lock === "restrictions" && <span className="pill gold"><Icon name="lock" size={11} /> had restrictions</span>}
+                          {tool.id === "unlock" && it.lock === "none" && <span className="pill">not locked</span>}
                         </div>
                       </div>
                       <div className="file-actions">
@@ -709,7 +720,7 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
             <>
               <Field label="Text">
                 <input value={v.wmText} onChange={(e) => set({ wmText: e.target.value })} aria-label="Watermark text" />
-                {T.unsupportedChars(v.wmText) && <div className="form-error">These characters can't be drawn yet and will show as “?”: {T.unsupportedChars(v.wmText)}</div>}
+                {T.unsupportedChars(v.wmText) && <div className="field-hint warn">The built-in font has no {T.unsupportedChars(v.wmText)} — those characters will print as “?”.</div>}
               </Field>
               <Field label="Size"><Slider label="Size" value={v.wmSize} min={10} max={140} onChange={(wmSize) => set({ wmSize })} format={(s) => `${s} pt`} /></Field>
               <Field label="Colour"><ColorPicker value={v.color} onChange={(color) => set({ color })} /></Field>
@@ -759,7 +770,13 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
         </>
       );
     case "unlock":
-      return <Explainer text="Opus asks for each file's password when you add it, then saves copies without it." />;
+      return (
+        <>
+          <Explainer text="Removes both kinds of lock: the password needed to open a file, and restrictions on printing, copying or editing." />
+          <Explainer text="For files that need a password to open, Opus asks for it when you add them. Restrictions are removed without a password." />
+          <Explainer text="Opus can't open a file whose password you don't know." />
+        </>
+      );
     default:
       return null;
   }
@@ -984,7 +1001,8 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
       for (const it of items) {
         const bytes = it.source?.bytes ?? it.raw!;
         try {
-          if (bytes.length < 64) throw new Error("This file is empty — there is nothing to repair");
+          if (bytes.length === 0) throw new Error("This file is empty — there is nothing to repair");
+          if (!new TextDecoder("latin1").decode(bytes.subarray(0, 1024)).includes("%PDF")) throw new Error("This isn't a PDF file, so it can't be repaired");
           let fixed: Uint8Array;
           if (await native.hasEngine()) {
             fixed = await native.repair(bytes).catch(() => T.resave(bytes));
@@ -1051,7 +1069,12 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
       return each(async (it, src) => pdfOut(it, await buildPdf(pagesOf(src), map(src), { password: v.password }), "AES-256", true));
     case "unlock":
       return each(async (it, src) =>
-        pdfOut(it, await buildPdf(pagesOf(src), map(src)), it.wasProtected ? "Password removed" : "Wasn't protected", it.wasProtected),
+        pdfOut(
+          it,
+          await buildPdf(pagesOf(src), map(src)),
+          it.lock === "password" ? "Password removed" : it.lock === "restrictions" ? "Restrictions removed" : "Wasn't locked",
+          it.lock !== "none",
+        ),
       );
     default:
       throw new Error("This tool isn't available yet");

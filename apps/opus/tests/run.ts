@@ -378,8 +378,30 @@ await test("blank pages follow rotated neighbours", async () => {
 });
 
 await test("repair refuses an empty file with a clear message", async () => {
-  try { await T.resave(new Uint8Array(10)); throw new Error("no"); }
+  try { await T.resave(new Uint8Array(0)); throw new Error("no"); }
   catch (e) { assert(/empty/.test((e as Error).message), (e as Error).message); }
+  try { await T.resave(new TextEncoder().encode("just some text, not a pdf")); throw new Error("no"); }
+  catch (e) { assert(/isn't a PDF/.test((e as Error).message), (e as Error).message); }
+});
+
+await test("unlock removes print/copy restrictions without a password", async () => {
+  const d = await PDFDocument.create();
+  d.addPage([300, 300]);
+  d.encrypt({ userPassword: "", ownerPassword: "secret-owner", permissions: { printing: false, copying: false, modifying: false } });
+  const s = await loadSource(await d.save(), "restricted.pdf");
+  eq(s.restrictionsRemoved, true);
+  const out = await buildPdf(pagesOf(s), new Map([[s.id, s]]));
+  const back = await PDFDocument.load(out);
+  eq(back.isEncrypted, false);
+});
+
+await test("unlock removes an open password once it's given", async () => {
+  const d = await PDFDocument.create();
+  d.addPage([300, 300]);
+  d.encrypt({ userPassword: "open-me", ownerPassword: "owner" });
+  const s = await loadSource(await d.save(), "locked.pdf", "open-me");
+  const back = await PDFDocument.load(await buildPdf(pagesOf(s), new Map([[s.id, s]])));
+  eq(back.isEncrypted, false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
