@@ -63,7 +63,7 @@ export const TOOLS: ToolDef[] = [
   { id: "watermark", name: "Watermark", blurb: "Stamp text or a logo over your pages.", category: "edit", icon: "stamp", input: "pdf", multiple: true, mode: "batch", keywords: "stamp draft confidential logo" },
   { id: "crop", name: "Crop pages", blurb: "Trim margins off every page.", category: "edit", icon: "crop", input: "pdf", multiple: true, mode: "batch", keywords: "trim margin cut" },
   { id: "edit", name: "Edit PDF", blurb: "Add text, images, shapes, highlights and drawings.", category: "edit", icon: "pen", input: "pdf", multiple: false, mode: "editor", keywords: "annotate text write draw shape markup comment note" },
-  { id: "compare", name: "Compare PDFs", blurb: "See what changed between two versions.", category: "edit", icon: "compare", input: "pdf", multiple: true, mode: "combine", soon: true, keywords: "diff difference" },
+  { id: "compare", name: "Compare PDFs", blurb: "See what changed between two versions, side by side.", category: "edit", icon: "compare", input: "pdf", multiple: true, mode: "combine", keywords: "diff difference changes versions" },
 
   // Secure
   { id: "protect", name: "Protect PDF", blurb: "Lock files with a password and AES-256 encryption.", category: "secure", icon: "lock", input: "pdf", multiple: true, mode: "batch", keywords: "password encrypt secure" },

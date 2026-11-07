@@ -9,6 +9,7 @@ import {
 import * as T from "../lib/tools";
 import * as native from "../lib/native";
 import { ocrToSearchablePdf } from "../lib/ocr";
+import { comparePdfs } from "../lib/compare";
 import * as platform from "../lib/platform";
 import { prepareImage, previewUrl, pdfToImages, extractImages, isImageName } from "../lib/images";
 import { closeSource } from "../lib/render";
@@ -189,7 +190,7 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
   // ---------- running ----------
   const needsEngine = tool.engine && !engineReady;
   const single = items[0];
-  const canRun = items.length > 0 && !running && !needsEngine && (tool.mode !== "combine" || tool.id !== "merge" || items.length >= 2);
+  const canRun = items.length > 0 && !running && !needsEngine && (tool.mode !== "combine" || items.length >= 2) && (tool.id !== "compare" || items.length === 2);
 
   const run = async () => {
     setRunning(true);
@@ -436,7 +437,8 @@ export function ToolRunner({ tool, initialFiles, loadPdfs, onOpenInEditor, toast
             <button className="primary run" disabled={!canRun} onClick={run}>
               {running ? <><span className="spinner small" /> {progress || "Working…"}</> : <>{runLabel}</>}
             </button>
-            {tool.id === "merge" && items.length === 1 && <div className="field-hint center">Add at least one more PDF</div>}
+            {(tool.id === "merge" || tool.id === "compare") && items.length < 2 && <div className="field-hint center">Add {2 - items.length} more PDF</div>}
+            {tool.id === "compare" && items.length > 2 && <div className="field-hint center">Compare uses the first two files</div>}
           </div>
         </aside>
       </div>
@@ -452,7 +454,7 @@ const RUN_LABEL: Record<string, string> = {
   blank: "Insert pages", reverse: "Reverse pages", compress: "Compress", repair: "Repair", grayscale: "Convert to grayscale",
   flatten: "Flatten forms", metadata: "Save properties", "pdf-to-image": "Convert to images", "image-to-pdf": "Create PDF",
   "extract-images": "Extract images", pdfa: "Convert to PDF/A", "page-numbers": "Add page numbers", watermark: "Add watermark",
-  crop: "Crop pages", protect: "Protect", unlock: "Unlock", ocr: "Make searchable",
+  crop: "Crop pages", protect: "Protect", unlock: "Unlock", ocr: "Make searchable", compare: "Compare",
 };
 
 const isPagePicker = (id: string) => id === "remove" || id === "extract";
@@ -782,6 +784,8 @@ function Options({ tool, opts, items }: { tool: ToolDef; opts: Opts; items: Item
           <Explainer text="Opus can't open a file whose password you don't know." />
         </>
       );
+    case "compare":
+      return <Explainer text="Opus renders both PDFs and marks every area that changed in red, laid out side by side. Add the older version first, then the newer one." />;
     case "ocr":
       return (
         <>
@@ -1095,6 +1099,12 @@ async function execute(id: string, items: Item[], v: Values, progress: (s: strin
           it.lock !== "none",
         ),
       );
+    case "compare": {
+      const [x, y] = items;
+      if (!x.source || !y.source) throw new Error("Both files must be readable PDFs");
+      const r = await comparePdfs(x.source, y.source, { nameA: x.name, nameB: y.name, onProgress: (d, t) => progress(`Comparing page ${d + 1} of ${t}…`) });
+      return [{ name: `Compare - ${baseName(x.name)} vs ${baseName(y.name)}.pdf`, bytes: r.pdf, kind: "pdf", note: r.summary, good: r.changedPages === 0 }];
+    }
     case "ocr":
       return each(async (it, src) => {
         const r = await ocrToSearchablePdf(src, { dpi: v.ocrDpi, force: v.ocrForce, onProgress: (d, t) => progress(items.length > 1 ? `${it.name}: page ${d + 1} of ${t}` : `Reading page ${d + 1} of ${t}…`) });
