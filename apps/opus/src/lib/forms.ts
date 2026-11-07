@@ -83,9 +83,10 @@ export async function readForm(source: Source): Promise<FormInfo> {
       continue;
     }
 
-    for (const widget of field.acroField.getWidgets()) {
+    const widgets = field.acroField.getWidgets();
+    widgets.forEach((widget, wi) => {
       const pIdx = widgetPage(doc, pages, byTag, widget);
-      if (pIdx < 0) continue;
+      if (pIdx < 0) return;
       const r = widget.getRectangle();
       const a = toView(pages[pIdx], r.x, r.y);
       const b = toView(pages[pIdx], r.x + r.width, r.y + r.height);
@@ -93,9 +94,11 @@ export async function readForm(source: Source): Promise<FormInfo> {
         name, kind, page: pIdx,
         rect: { x: Math.min(a.vx, b.vx), y: Math.min(a.vy, b.vy), w: Math.abs(b.vx - a.vx), h: Math.abs(b.vy - a.vy) },
         options, multiline,
-        exportValue: kind === "radio" ? widget.getOnValue()?.toString().replace(/^\//, "") : undefined,
+        // Use the option this widget selects (same namespace getSelected/select
+        // use), so a radio shows as checked and saves correctly.
+        exportValue: kind === "radio" ? options?.[wi] : undefined,
       });
-    }
+    });
   }
   return { fields, values };
 }
@@ -110,7 +113,18 @@ export function applyFormValues(doc: PDFDocument, values: Record<string, string>
     try {
       if (field instanceof PDFTextField) field.setText(value || undefined);
       else if (field instanceof PDFCheckBox) value ? field.check() : field.uncheck();
-      else if (field instanceof PDFRadioGroup) value ? field.select(value) : field.clear();
+      else if (field instanceof PDFRadioGroup) {
+        if (!value) field.clear();
+        else {
+          const opts = field.getOptions();
+          // Match the stored value against the field's options; fall back to a
+          // widget on-state name if that's what we were given.
+          const target = opts.includes(value)
+            ? value
+            : opts[field.acroField.getWidgets().findIndex((w) => w.getOnValue()?.toString().replace(/^\//, "") === value)];
+          if (target != null) field.select(target);
+        }
+      }
       else if (field instanceof PDFDropdown) value ? field.select(value) : field.clear();
       else if (field instanceof PDFOptionList) value ? field.select(value) : field.clear();
       else continue;

@@ -5,7 +5,7 @@ import type { PageRef, Source } from "../lib/pdfops";
 import { normalizeRotation } from "../lib/pdfops";
 import { pageSize, renderPageDataUrl } from "../lib/render";
 import {
-  annoBox, newAnnoId, type Anno, type ImageStore, type TextAnno, type ShapeAnno, type MarkAnno, type ImageAnno, type DrawAnno, type LineAnno,
+  annoBox, newAnnoId, type Anno, type ImageStore, type TextAnno, type ShapeAnno, type ImageAnno,
 } from "../lib/annots";
 import type { FieldWidget } from "../lib/forms";
 import { prepareImage } from "../lib/images";
@@ -117,10 +117,14 @@ export function Annotate(props: Props) {
   };
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // ---------- creation ----------
-  const draftRef = useRef<{ kind: "create" | "move" | "resize"; id?: string; start: { x: number; y: number }; orig?: Anno; handle?: string } | null>(null);
-  const [, force] = useState(0);
-  const redraw = () => force((n) => n + 1);
+  // ---------- creation & editing ----------
+  // A gesture (create/move/resize/draw) updates `live` locally for a smooth,
+  // history-free preview, and commits ONE history entry on pointer-up.
+  type BoxLike = { x: number; y: number; w: number; h: number };
+  const draftRef = useRef<{ kind: "create" | "move" | "resize"; isNew: boolean; start: { x: number; y: number }; orig: Anno; handle?: string } | null>(null);
+  const [live, setLive] = useState<Anno | null>(null);
+  const liveRef = useRef<Anno | null>(null);
+  const setLiveBoth = (a: Anno | null) => { liveRef.current = a; setLive(a); };
 
   const beginCreate = (e: React.PointerEvent) => {
     if (!size) return;
@@ -135,28 +139,14 @@ export function Annotate(props: Props) {
       addAnno(a); setTool("select"); setSelected(id); setEditingId(id);
       return;
     }
-    if (tool === "draw") {
-      const a: DrawAnno = { id, type: "draw", points: [{ x, y }], color, width: strokeWidth };
-      addAnno(a);
-      draftRef.current = { kind: "create", id, start: p };
-      overlayRef.current!.setPointerCapture(e.pointerId);
-      return;
-    }
-    if (tool === "line" || tool === "arrow") {
-      const a: LineAnno = { id, type: "line", x1: x, y1: y, x2: x, y2: y, color, width: strokeWidth, arrow: tool === "arrow" };
-      addAnno(a);
-      draftRef.current = { kind: "create", id, start: p };
-      overlayRef.current!.setPointerCapture(e.pointerId);
-      return;
-    }
-    // box-like: rect, ellipse, highlight, redact
-    const base = { id, x, y, w: 0, h: 0 };
     let a: Anno;
-    if (tool === "rect" || tool === "ellipse") a = { ...base, type: tool, stroke: color, fill: fillOn ? color : null, width: strokeWidth } as ShapeAnno;
-    else if (tool === "highlight") a = { ...base, type: "highlight", color: "#ffe14a" } as MarkAnno;
-    else a = { ...base, type: "redact" } as MarkAnno;
-    addAnno(a);
-    draftRef.current = { kind: "create", id, start: p };
+    if (tool === "draw") a = { id, type: "draw", points: [{ x, y }], color, width: strokeWidth };
+    else if (tool === "line" || tool === "arrow") a = { id, type: "line", x1: x, y1: y, x2: x, y2: y, color, width: strokeWidth, arrow: tool === "arrow" };
+    else if (tool === "rect" || tool === "ellipse") a = { id, type: tool, x, y, w: 0, h: 0, stroke: color, fill: fillOn ? color : null, width: strokeWidth };
+    else if (tool === "highlight") a = { id, type: "highlight", x, y, w: 0, h: 0, color: "#ffe14a" };
+    else a = { id, type: "redact", x, y, w: 0, h: 0 };
+    setLiveBoth(a);
+    draftRef.current = { kind: "create", isNew: true, start: p, orig: a };
     overlayRef.current!.setPointerCapture(e.pointerId);
   };
 
@@ -164,61 +154,66 @@ export function Annotate(props: Props) {
     const d = draftRef.current;
     if (!d || !size) return;
     const p = toView(e.clientX, e.clientY);
-    const cur = list.find((x) => x.id === d.id);
-    if (d.kind === "create" && cur) {
+    if (d.kind === "create") {
+      const cur = liveRef.current!;
       if (cur.type === "draw") {
         const last = cur.points[cur.points.length - 1];
-        if (Math.hypot(p.x - last.x, p.y - last.y) > 1.2) patchAnno(cur.id, { points: [...cur.points, { x: p.x, y: p.y }] } as Partial<DrawAnno>);
+        if (Math.hypot(p.x - last.x, p.y - last.y) > 1.2) setLiveBoth({ ...cur, points: [...cur.points, { x: p.x, y: p.y }] });
       } else if (cur.type === "line") {
-        patchAnno(cur.id, { x2: p.x, y2: p.y } as Partial<LineAnno>);
+        setLiveBoth({ ...cur, x2: p.x, y2: p.y });
       } else {
         const x = Math.min(d.start.x, p.x), y = Math.min(d.start.y, p.y);
-        patchAnno(cur.id, { x, y, w: Math.abs(p.x - d.start.x), h: Math.abs(p.y - d.start.y) } as Partial<BoxLike>);
+        setLiveBoth({ ...cur, x, y, w: Math.abs(p.x - d.start.x), h: Math.abs(p.y - d.start.y) } as Anno);
       }
-    } else if (d.kind === "move" && d.orig) {
-      const dx = p.x - d.start.x, dy = p.y - d.start.y;
-      moveAnno(d.orig, dx, dy);
-    } else if (d.kind === "resize" && d.orig) {
-      resizeAnno(d.orig, d.handle!, p.x - d.start.x, p.y - d.start.y);
+    } else if (d.kind === "move") {
+      setLiveBoth(movedAnno(d.orig, p.x - d.start.x, p.y - d.start.y));
+    } else if (d.kind === "resize") {
+      setLiveBoth(resizedAnno(d.orig, d.handle!, p.x - d.start.x, p.y - d.start.y));
     }
   };
 
   const endPointer = () => {
     const d = draftRef.current;
     draftRef.current = null;
-    if (!d) return;
-    if (d.kind === "create") {
-      const cur = list.find((x) => x.id === d.id);
-      // Discard an accidental zero-size shape.
-      if (cur) {
-        const b = annoBox(cur);
-        if (cur.type !== "draw" && cur.type !== "line" && b.w < 4 && b.h < 4) { removeAnno(cur.id); setTool("select"); return; }
-        if (cur.type === "draw" && cur.points.length < 2) { removeAnno(cur.id); return; }
+    const cur = liveRef.current;
+    setLiveBoth(null);
+    if (!d || !cur) return;
+    // Discard an accidental zero-size shape or empty drawing.
+    if (d.isNew) {
+      const b = annoBox(cur);
+      if (cur.type === "draw" ? cur.points.length < 2 : cur.type !== "line" && b.w < 4 && b.h < 4) {
+        if (tool !== "draw" && tool !== "highlight") setTool("select");
+        return;
       }
-      if (tool !== "draw" && tool !== "highlight") { setTool("select"); setSelected(d.id!); }
+      update([...list, cur]); // one history entry for the whole creation
+      if (tool !== "draw" && tool !== "highlight") { setTool("select"); setSelected(cur.id); }
+    } else {
+      update(list.map((x) => (x.id === cur.id ? cur : x))); // one entry for the move/resize
     }
   };
 
-  type BoxLike = { x: number; y: number; w: number; h: number };
-  const moveAnno = (orig: Anno, dx: number, dy: number) => {
-    if (!size) return;
-    if (orig.type === "draw") {
-      patchAnno(orig.id, { points: orig.points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy })) } as Partial<DrawAnno>);
-    } else if (orig.type === "line") {
-      patchAnno(orig.id, { x1: orig.x1 + dx, y1: orig.y1 + dy, x2: orig.x2 + dx, y2: orig.y2 + dy } as Partial<LineAnno>);
-    } else {
-      patchAnno(orig.id, { x: orig.x + dx, y: orig.y + dy } as Partial<BoxLike>);
-    }
+  const movedAnno = (orig: Anno, dx: number, dy: number): Anno => {
+    if (orig.type === "draw") return { ...orig, points: orig.points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy })) };
+    if (orig.type === "line") return { ...orig, x1: orig.x1 + dx, y1: orig.y1 + dy, x2: orig.x2 + dx, y2: orig.y2 + dy };
+    const b = orig as Anno & BoxLike;
+    return { ...b, x: b.x + dx, y: b.y + dy } as Anno;
   };
-  const resizeAnno = (orig: Anno, handle: string, dx: number, dy: number) => {
-    if (orig.type === "draw" || orig.type === "line") return;
-    let { x, y, w, h } = orig as BoxLike;
+  const resizedAnno = (orig: Anno, handle: string, dx: number, dy: number): Anno => {
+    if (orig.type === "draw" || orig.type === "line") return orig;
+    const b = orig as Anno & BoxLike;
+    let { x, y, w, h } = b;
     if (handle.includes("e")) w = Math.max(6, w + dx);
     if (handle.includes("s")) h = Math.max(6, h + dy);
-    if (handle.includes("w")) { x = x + dx; w = Math.max(6, w - dx); }
-    if (handle.includes("n")) { y = y + dy; h = Math.max(6, h - dy); }
-    patchAnno(orig.id, { x, y, w, h } as Partial<BoxLike>);
+    if (handle.includes("w")) { x = x + dx; w = Math.max(6, b.w - dx); }
+    if (handle.includes("n")) { y = y + dy; h = Math.max(6, b.h - dy); }
+    return { ...b, x, y, w, h } as Anno;
   };
+
+  // What the overlay actually renders: the committed list, with the live
+  // in-progress annotation swapped in (or appended for a brand-new one).
+  const displayList = live
+    ? (list.some((a) => a.id === live.id) ? list.map((a) => (a.id === live.id ? live : a)) : [...list, live])
+    : list;
 
   // ---------- keyboard ----------
   useEffect(() => {
@@ -329,7 +324,7 @@ export function Annotate(props: Props) {
                     <path d="M0,0 L6,3 L0,6 Z" />
                   </marker>
                 </defs>
-                {list.map((a) => <VecShape key={a.id} a={a} selected={a.id === selected} />)}
+                {displayList.map((a) => <VecShape key={a.id} a={a} selected={a.id === selected} />)}
               </svg>
 
               {/* html annotations (text / images) + selection chrome */}
@@ -339,7 +334,7 @@ export function Annotate(props: Props) {
                 style={{ pointerEvents: creating ? "auto" : "auto", cursor: creating ? "crosshair" : "default" }}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;
-                  if (creating) { beginCreate(e); redraw(); }
+                  if (creating) beginCreate(e);
                   else if (e.target === e.currentTarget) { setSelected(null); setEditingId(null); }
                 }}
                 onPointerMove={onPointerMove}
@@ -350,7 +345,7 @@ export function Annotate(props: Props) {
                   <FormControl key={`${fld.name}-${i}`} field={fld} value={props.formValues[fld.name] ?? ""} scale={scale} onChange={(v) => props.setFormValue(fld.name, v)} />
                 ))}
 
-                {list.map((a) => (
+                {displayList.map((a) => (
                   <HtmlAnno
                     key={a.id}
                     a={a}
@@ -362,11 +357,15 @@ export function Annotate(props: Props) {
                     onStartMove={(e) => {
                       if (creating) return;
                       setSelected(a.id);
-                      draftRef.current = { kind: "move", id: a.id, start: toView(e.clientX, e.clientY), orig: a };
+                      const orig = list.find((x) => x.id === a.id) ?? a;
+                      draftRef.current = { kind: "move", isNew: false, start: toView(e.clientX, e.clientY), orig };
+                      setLiveBoth(orig);
                       overlayRef.current!.setPointerCapture(e.pointerId);
                     }}
                     onStartResize={(e, handle) => {
-                      draftRef.current = { kind: "resize", id: a.id, start: toView(e.clientX, e.clientY), orig: a, handle };
+                      const orig = list.find((x) => x.id === a.id) ?? a;
+                      draftRef.current = { kind: "resize", isNew: false, start: toView(e.clientX, e.clientY), orig, handle };
+                      setLiveBoth(orig);
                       overlayRef.current!.setPointerCapture(e.pointerId);
                     }}
                     onEdit={() => setEditingId(a.id)}

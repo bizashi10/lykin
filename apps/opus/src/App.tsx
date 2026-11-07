@@ -10,7 +10,7 @@ import { addRecent, forgetRecent, loadRecents, loadTheme, saveTheme, type Recent
 import { hasEngine } from "./lib/native";
 import { isImageName } from "./lib/images";
 import { Annotate } from "./components/Annotate";
-import { type Anno, type ImageStore } from "./lib/annots";
+import { type Anno, type ImageStore, hasRedaction } from "./lib/annots";
 import { exportEdited, hasAnyAnnotations } from "./lib/editorExport";
 import { readForm, type FormInfo } from "./lib/forms";
 import { useHistory } from "./lib/history";
@@ -229,8 +229,9 @@ export default function App() {
     if (!names.length) return true;
     return platform.confirm(
       `${names.join(", ")} has bookmarks or fillable form fields.\n\n` +
-        "Because pages were moved, removed or combined, this version of Opus can't keep them " +
-        "(the page contents themselves are kept). Your original file is not changed unless you save over it.\n\nContinue?",
+        "Because pages were moved, removed or combined, this version of Opus can't keep them — " +
+        "including anything typed into the form fields (the page contents themselves are kept). " +
+        "Your original file is not changed unless you save over it.\n\nContinue?",
     );
   }, []);
 
@@ -321,6 +322,13 @@ export default function App() {
       const snapshot = doc;
       const edited = hasAnyAnnotations(snapshot.annos) || Object.keys(snapshot.form).length > 0;
       if (!(await confirmExtrasLoss(snapshot.pages))) return;
+      // Redaction rebuilds the file as images for the affected pages, which
+      // can't keep bookmarks or form fields anywhere in the document.
+      const redacting = snapshot.pages.some((p) => hasRedaction(snapshot.annos[p.key]));
+      const willLoseExtras = redacting && (!!formInfo?.fields.length || snapshot.pages.some((p) => sourcesRef.current.get(p.sourceId)?.hasExtras));
+      if (willLoseExtras && !(await platform.confirm(
+        "Redaction permanently removes the hidden content by turning the redacted pages into images. Bookmarks and fillable form fields in this PDF can't be kept.\n\nContinue?",
+      ))) return;
       await withBusy("Saving…", async () => {
         const bytes = edited
           ? await exportEdited(snapshot.pages, sourcesRef.current, snapshot.annos, imagesRef.current, {
