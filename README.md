@@ -4,7 +4,7 @@ A personal, offline office suite for Windows. No ads, no account — files never
 
 | App | Replaces | Colour | Status |
 |---|---|---|---|
-| **Opus** | Adobe Acrobat (PDF) | Red | v0.2 — 21 tools |
+| **Opus** | Adobe Acrobat (PDF) | Red | v0.3 — 25 tools + editor |
 | **Prose** | Microsoft Word | Blue | planned |
 | **Ordo** | Microsoft Excel | Green | planned |
 | **Podium** | Microsoft PowerPoint | Orange | planned |
@@ -25,6 +25,7 @@ click **More info → Run anyway**.
 - **Optimize:** compress (3 levels), repair, grayscale, flatten forms, edit properties
 - **Convert:** PDF to JPG/PNG, images to PDF (phone photos auto-rotated), extract images, PDF/A-1b/2b/3b
 - **Edit:** page numbers, text or image watermark, crop — with live preview
+- **Full editor:** add text, notes, freehand drawing, highlights, lines, arrows, rectangles, ellipses, images and signatures; fill form fields; **true redaction** that removes the hidden content, not just covers it
 - **Protect:** password-protect (AES-256), unlock (known password, or print/copy/edit restrictions)
 - Batch processing: most tools take many files at once
 - Results from password-protected files stay protected
@@ -36,7 +37,9 @@ click **More info → Run anyway**.
   internal links — Opus asks before saving when that would happen.
 - A file with separate open and owner passwords is saved with one password (no restrictions).
 - PDFs dropped onto the window from Explorer open fine, but Save will ask where to save.
-- Not yet built: edit text/annotate, sign, redact, OCR, compare, Word/Excel/PowerPoint conversion, AI.
+- Redaction flattens affected pages to images (so the hidden data is truly gone); other pages keep their text.
+- Editor text uses built-in fonts: non-Latin letters show as "?".
+- Not yet built: live text re-flow editing, OCR, compare, Word/Excel/PowerPoint conversion, AI.
 - Watermarks and page numbers use built-in fonts: non-Latin letters print as "?".
 
 ## For developers

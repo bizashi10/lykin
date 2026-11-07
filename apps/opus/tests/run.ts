@@ -6,6 +6,10 @@ import {
 } from "../src/lib/pdfops.ts";
 import * as T from "../src/lib/tools.ts";
 import { TOOLS, matchTool, suggestFor } from "../src/tools/registry.ts";
+import { exportEdited, hasAnyAnnotations } from "../src/lib/editorExport.ts";
+import { newAnnoId, type Anno } from "../src/lib/annots.ts";
+import { readForm } from "../src/lib/forms.ts";
+import { StandardFonts as SF } from "@cantoo/pdf-lib";
 
 let passed = 0;
 let failed = 0;
@@ -402,6 +406,39 @@ await test("unlock removes an open password once it's given", async () => {
   const s = await loadSource(await d.save(), "locked.pdf", "open-me");
   const back = await PDFDocument.load(await buildPdf(pagesOf(s), new Map([[s.id, s]])));
   eq(back.isEncrypted, false);
+});
+
+await test("editor: overlay annotations render and keep text", async () => {
+  const s = await loadSource(A, "a.pdf");
+  const pages = pagesOf(s);
+  const anno: Anno = { id: newAnnoId(), type: "rect", x: 20, y: 20, w: 100, h: 60, stroke: "#ff0000", fill: null, width: 2 };
+  const text: Anno = { id: newAnnoId(), type: "text", x: 20, y: 100, w: 200, h: 30, text: "Hello overlay", size: 14, color: "#0000ff", align: "left", bold: false, italic: false };
+  const out = await exportEdited(pages, new Map([[s.id, s]]), { [pages[0].key]: [anno, text] }, {});
+  const d = await PDFDocument.load(out);
+  eq(d.getPageCount(), 3);
+  // original page text is preserved (no rasterization without redaction)
+  eq(await widths(out), [301, 302, 303]);
+});
+
+await test("editor: redaction flag forces a different path", () => {
+  assert(hasAnyAnnotations({ p: [{ id: "x", type: "redact", x: 0, y: 0, w: 10, h: 10 } as Anno] }));
+  assert(!hasAnyAnnotations({ p: [] }));
+});
+
+await test("editor: form fill via exportEdited", async () => {
+  const fd = await PDFDocument.create();
+  const page = fd.addPage([300, 300]);
+  const f = fd.getForm();
+  const tf = f.createTextField("who"); tf.addToPage(page, { x: 20, y: 200, width: 150, height: 20 });
+  const cb = f.createCheckBox("ok"); cb.addToPage(page, { x: 20, y: 150, width: 14, height: 14 });
+  const src = await loadSource(await fd.save(), "form.pdf");
+  const info = await readForm(src);
+  eq(info.fields.length, 2);
+  const pages = pagesOf(src);
+  const out = await exportEdited(pages, new Map([[src.id, src]]), {}, {}, { fieldValues: { who: "Wolf", ok: "on" } });
+  const back = await PDFDocument.load(out);
+  eq((back.getForm().getField("who") as unknown as { getText(): string }).getText(), "Wolf");
+  void SF;
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

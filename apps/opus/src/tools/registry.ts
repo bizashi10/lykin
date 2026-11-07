@@ -62,14 +62,15 @@ export const TOOLS: ToolDef[] = [
   { id: "page-numbers", name: "Page numbers", blurb: "Number pages, with the style and position you want.", category: "edit", icon: "hash", input: "pdf", multiple: true, mode: "batch", keywords: "numbering footer header" },
   { id: "watermark", name: "Watermark", blurb: "Stamp text or a logo over your pages.", category: "edit", icon: "stamp", input: "pdf", multiple: true, mode: "batch", keywords: "stamp draft confidential logo" },
   { id: "crop", name: "Crop pages", blurb: "Trim margins off every page.", category: "edit", icon: "crop", input: "pdf", multiple: true, mode: "batch", keywords: "trim margin cut" },
-  { id: "edit", name: "Edit PDF", blurb: "Add text, images, shapes and highlights.", category: "edit", icon: "pen", input: "pdf", multiple: false, mode: "editor", soon: true, keywords: "annotate text write" },
+  { id: "edit", name: "Edit PDF", blurb: "Add text, images, shapes, highlights and drawings.", category: "edit", icon: "pen", input: "pdf", multiple: false, mode: "editor", keywords: "annotate text write draw shape markup comment note" },
   { id: "compare", name: "Compare PDFs", blurb: "See what changed between two versions.", category: "edit", icon: "compare", input: "pdf", multiple: true, mode: "combine", soon: true, keywords: "diff difference" },
 
   // Secure
   { id: "protect", name: "Protect PDF", blurb: "Lock files with a password and AES-256 encryption.", category: "secure", icon: "lock", input: "pdf", multiple: true, mode: "batch", keywords: "password encrypt secure" },
   { id: "unlock", name: "Unlock PDF", blurb: "Remove a known password or print, copy and edit restrictions.", category: "secure", icon: "unlock", input: "pdf", multiple: true, mode: "batch", keywords: "remove password decrypt locked restrictions permissions owner print copy edit secured" },
-  { id: "sign", name: "Sign PDF", blurb: "Draw, type or upload your signature.", category: "secure", icon: "signature", input: "pdf", multiple: false, mode: "editor", soon: true, keywords: "signature" },
-  { id: "redact", name: "Redact", blurb: "Permanently black out private information.", category: "secure", icon: "redact", input: "pdf", multiple: false, mode: "editor", soon: true, keywords: "censor hide black out" },
+  { id: "sign", name: "Sign PDF", blurb: "Draw, type or upload your signature, then place it.", category: "secure", icon: "signature", input: "pdf", multiple: false, mode: "editor", keywords: "signature initials fill form" },
+  { id: "redact", name: "Redact", blurb: "Permanently black out and remove private text.", category: "secure", icon: "redact", input: "pdf", multiple: false, mode: "editor", keywords: "censor hide black out remove confidential" },
+  { id: "fillsign", name: "Fill & sign", blurb: "Type into form fields and add your signature.", category: "secure", icon: "text", input: "pdf", multiple: false, mode: "editor", keywords: "form fields fill checkbox sign" },
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);

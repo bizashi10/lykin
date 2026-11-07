@@ -52,6 +52,17 @@ const paths: Record<string, string> = {
   moon: "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z",
   monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
   tools: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM16.5 13v7M13 16.5h7",
+  cursor: "M5 3l15 7-6 2-2 6z",
+  text: "M5 5h14M12 5v14M9 19h6",
+  note: "M5 4h14v10l-5 5H5zM14 19v-5h5",
+  highlight: "M4 20h16M6 16l8-8 4 4-8 8H6zM13 7l2-3 4 4-3 2",
+  line: "M4 20L20 4",
+  arrow: "M4 20L20 4M20 4h-7M20 4v7",
+  square: "M4 5h16v14H4z",
+  circle: "M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16z",
+  "align-left": "M4 6h16M4 12h10M4 18h14",
+  "align-center": "M4 6h16M7 12h10M5 18h14",
+  "align-right": "M4 6h16M10 12h10M6 18h14",
   file: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6",
 };
 

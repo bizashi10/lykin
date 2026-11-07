@@ -757,3 +757,100 @@ button.big.primary { border-color: transparent; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- editor: annotate ---------- */
+.annotate { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.annotate.empty { display: grid; place-items: center; color: var(--text-3); }
+
+.anno-toolbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 7px 12px; min-height: 52px;
+  background: var(--bg-2); border-bottom: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: none;
+}
+.anno-toolbar::-webkit-scrollbar { display: none; }
+.tool-palette { display: flex; gap: 2px; padding: 3px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md); flex: none; }
+.palette-btn { padding: 7px; border-radius: 7px; color: var(--text-2); }
+.palette-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.palette-btn.on { background: var(--accent); color: #fff; }
+
+.anno-options { display: flex; align-items: center; gap: 14px; flex: none; }
+.opt-slider { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.opt-slider input { width: 90px; accent-color: var(--accent); }
+.opt-colors, .sign-colors { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-2); }
+.opt-colors .swatch, .sign-colors .swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line-2); padding: 0; }
+.opt-colors .swatch.on, .sign-colors .swatch.on { box-shadow: 0 0 0 2px var(--accent); }
+.opt-check, .opt-note { font-size: 12.5px; color: var(--text-2); display: inline-flex; align-items: center; gap: 6px; }
+.opt-note svg { color: var(--gold); }
+.opt-group { display: flex; gap: 2px; }
+.opt-toggle { padding: 5px 9px; border: 1px solid var(--line-2); border-radius: 6px; color: var(--text-2); min-width: 30px; justify-content: center; }
+.opt-toggle.on { background: var(--accent); color: #fff; border-color: transparent; }
+.anno-zoom { display: flex; align-items: center; gap: 4px; flex: none; }
+
+.anno-body { flex: 1; min-height: 0; display: flex; position: relative; }
+.anno-strip {
+  width: 128px; flex: none; overflow-y: auto; overflow-x: hidden;
+  background: var(--bg-2); border-right: 1px solid var(--line);
+  padding: 10px 6px; display: flex; flex-direction: column; gap: 10px; align-items: center;
+}
+.anno-thumb { flex-direction: column; padding: 5px; border-radius: 8px; gap: 3px; color: var(--text-3); font-size: 11.5px; position: relative; }
+.anno-thumb.active { background: var(--accent-soft); color: var(--text); }
+.anno-thumb.active .page-canvas { outline: 2px solid var(--accent); }
+.anno-badge { position: absolute; top: 2px; right: 10px; background: var(--accent); color: #fff; font-size: 10px; font-style: normal; min-width: 15px; height: 15px; border-radius: 8px; display: inline-grid; place-items: center; padding: 0 3px; }
+
+.anno-stage { flex: 1; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 24px; background: var(--bg); }
+.anno-page { position: relative; flex: none; box-shadow: var(--page-shadow); background: #fff; }
+.anno-page .page-canvas { position: absolute; inset: 0; }
+.vec-layer { position: absolute; inset: 0; pointer-events: none; }
+.vec-layer line, .vec-layer polyline { pointer-events: none; }
+#arrowhead path { fill: context-stroke; }
+.html-layer { position: absolute; inset: 0; }
+
+.html-anno { position: absolute; }
+.html-anno.selection-only { pointer-events: auto; }
+.html-anno.text, .html-anno.note, .html-anno.image { cursor: move; }
+.html-anno.note { background: #fff4c2cc; border: 1px solid #d8b062; border-radius: 2px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+.html-anno.selected { outline: 1.5px solid #2a5bd7; outline-offset: 1px; }
+.anno-text-view, .anno-text-edit { width: 100%; height: 100%; overflow: hidden; white-space: pre-wrap; word-break: break-word; padding: 2px; box-sizing: border-box; }
+.html-anno.note .anno-text-view, .html-anno.note .anno-text-edit { padding: 6px; }
+.anno-text-view .placeholder { color: #9aa; font-style: italic; }
+.anno-text-edit { border: none; background: rgba(42,91,215,.06); resize: none; outline: none; font-family: inherit; }
+.anno-text-view { cursor: text; }
+
+.handle { position: absolute; width: 10px; height: 10px; background: #fff; border: 1.5px solid #2a5bd7; border-radius: 2px; }
+.handle.h-nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.handle.h-ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.handle.h-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.handle.h-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.handle.h-n { left: 50%; top: -5px; margin-left: -5px; cursor: ns-resize; }
+.handle.h-s { left: 50%; bottom: -5px; margin-left: -5px; cursor: ns-resize; }
+.handle.h-e { right: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+.handle.h-w { left: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+
+.form-field { position: absolute; border: 1px solid #2a7; background: rgba(60,200,140,.1); font-family: inherit; padding: 0 3px; color: #111; border-radius: 2px; }
+.form-field:focus { outline: 2px solid var(--accent); background: #fff; }
+.form-field.cb { width: auto; height: auto; accent-color: var(--accent); }
+textarea.form-field { padding: 2px 3px; resize: none; }
+
+.anno-selbar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 5px 8px 5px 14px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 999px; box-shadow: var(--pop-shadow); font-size: 13px; }
+.anno-selbar button:hover { color: var(--accent); }
+
+/* signature pad */
+.sign-modal { width: min(520px, 94vw); }
+.sign-area { margin: 14px 0; position: relative; }
+.sign-canvas { width: 100%; height: 180px; background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r-md); touch-action: none; cursor: crosshair; display: block; }
+.sign-baseline { position: absolute; left: 24px; right: 24px; bottom: 46px; border-bottom: 1.5px dashed var(--line-2); pointer-events: none; }
+.sign-clear { position: absolute; top: 8px; right: 8px; }
+.sign-input { height: 90px; font-size: 44px; text-align: center; border: 1px solid var(--line-2); border-radius: var(--r-md); }
+.sign-fonts { display: flex; gap: 8px; margin-top: 10px; }
+.sign-fonts button { flex: 1; justify-content: center; padding: 10px; border: 1px solid var(--line-2); border-radius: var(--r-md); font-size: 20px; }
+.sign-fonts button.on { border-color: var(--accent); background: var(--accent-soft); }
+.sign-area.upload { min-height: 150px; border: 1.5px dashed var(--line-2); border-radius: var(--r-md); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: pointer; color: var(--text-2); padding: 16px; text-align: center; }
+.sign-area.upload img { max-height: 130px; max-width: 100%; }
+
+@media (max-width: 720px) {
+  .anno-strip { display: none; }
+  .anno-toolbar { gap: 8px; }
+}
+.anno-page .page-img { position: absolute; inset: 0; background: #fff; }
+.anno-page .page-img img { display: block; width: 100%; height: 100%; }

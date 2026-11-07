@@ -9,6 +9,10 @@ import { TOOLS, type ToolDef } from "./tools/registry";
 import { addRecent, forgetRecent, loadRecents, loadTheme, saveTheme, type Recent, type Theme } from "./lib/recents";
 import { hasEngine } from "./lib/native";
 import { isImageName } from "./lib/images";
+import { Annotate } from "./components/Annotate";
+import { type Anno, type ImageStore } from "./lib/annots";
+import { exportEdited, hasAnyAnnotations } from "./lib/editorExport";
+import { readForm, type FormInfo } from "./lib/forms";
 import { useHistory } from "./lib/history";
 import * as platform from "./lib/platform";
 import { pageText, closeSource } from "./lib/render";
@@ -22,12 +26,16 @@ interface Doc {
   pages: PageRef[];
   /** Password applied when saving; null = no protection. */
   password: string | null;
+  /** Annotations placed on each page, keyed by PageRef.key. */
+  annos: Record<string, Anno[]>;
+  /** Form field values to apply on save, by field name. */
+  form: Record<string, string>;
 }
 interface Meta {
   name: string;
   path?: string;
 }
-type View = "read" | "organize";
+type View = "read" | "organize" | "edit";
 type Screen = { kind: "home" } | { kind: "tool"; tool: ToolDef; files: platform.PickedFile[]; key: number } | { kind: "editor" };
 type Dialog =
   | { kind: "password"; fileName: string; wrong: boolean; resolve: (pw: string | null) => void }
@@ -42,7 +50,7 @@ interface Toast {
   action?: { label: string; run: () => void };
 }
 
-const EMPTY: Doc = { pages: [], password: null };
+const EMPTY: Doc = { pages: [], password: null, annos: {}, form: {} };
 const ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 
 export default function App() {
@@ -76,6 +84,25 @@ export default function App() {
   const [engineReady, setEngineReady] = useState(false);
   useEffect(() => {
     hasEngine().then(setEngineReady);
+  }, []);
+  // Editor: embedded image/signature bytes, and detected form fields.
+  const [images, setImages] = useState<ImageStore>({});
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  const [formInfo, setFormInfo] = useState<FormInfo | null>(null);
+  const imgCounter = useRef(0);
+  const addImage = useCallback((bytes: Uint8Array, type: "png" | "jpg") => {
+    const id = `img${++imgCounter.current}`;
+    setImages((cur) => ({ ...cur, [id]: { bytes, type } }));
+    return id;
+  }, []);
+  const commitAnnos = useCallback((key: string, listForKey: Anno[]) => {
+    history.commit((d) => ({ ...d, annos: { ...d.annos, [key]: listForKey } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const setFormValue = useCallback((name: string, value: string) => {
+    history.commit((d) => ({ ...d, form: { ...d.form, [name]: value } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: light)");
@@ -223,9 +250,19 @@ export default function App() {
       setScreen({ kind: "editor" });
       setDropped(null);
       loaded.forEach((l) => remember(l.file.path, l.file.name));
-      const next: Doc = { pages, password: single ? (loaded[0].password ?? null) : null };
+      // Detect fillable form fields (single file only, used by the editor).
+      let form: Record<string, string> = {};
+      setFormInfo(null);
+      if (single) {
+        readForm(loaded[0].source).then((info) => {
+          setFormInfo(info.fields.length ? info : null);
+        }).catch(() => setFormInfo(null));
+        form = {};
+      }
+      const next: Doc = { pages, password: single ? (loaded[0].password ?? null) : null, annos: {}, form };
       history.reset(next);
       savedDoc.current = single ? next : EMPTY; // a fresh merge counts as unsaved
+      setImages({});
       setMeta(single ? { name: loaded[0].file.name, path: loaded[0].file.path } : { name: "Merged.pdf" });
       setSelected(new Set());
       setCurrent(0);
@@ -282,9 +319,14 @@ export default function App() {
     async (saveAs: boolean) => {
       if (!hasDoc || !meta) return;
       const snapshot = doc;
+      const edited = hasAnyAnnotations(snapshot.annos) || Object.keys(snapshot.form).length > 0;
       if (!(await confirmExtrasLoss(snapshot.pages))) return;
       await withBusy("Saving…", async () => {
-        const bytes = await buildPdf(snapshot.pages, sourcesRef.current, { password: snapshot.password ?? undefined });
+        const bytes = edited
+          ? await exportEdited(snapshot.pages, sourcesRef.current, snapshot.annos, imagesRef.current, {
+              password: snapshot.password ?? undefined, fieldValues: snapshot.form,
+            })
+          : await buildPdf(snapshot.pages, sourcesRef.current, { password: snapshot.password ?? undefined });
         const target = await platform.saveBytes(bytes, meta.name, saveAs ? undefined : meta.path);
         if (!target) return;
         savedDoc.current = snapshot;
@@ -468,9 +510,10 @@ export default function App() {
   const openTool = (tool: ToolDef, files: platform.PickedFile[] = []) => {
     if (tool.soon) return;
     if (tool.mode === "editor") {
-      if (files.length) openFiles(files.slice(0, 1)).then(() => setView("organize"));
-      else if (hasDoc) { setScreen({ kind: "editor" }); setView("organize"); }
-      else platform.pickPdfs(false).then((p) => { if (p.length) openFiles(p).then(() => setView("organize")); });
+      const dest: View = tool.id === "organize" ? "organize" : "edit";
+      if (files.length) openFiles(files.slice(0, 1)).then(() => setView(dest));
+      else if (hasDoc) { setScreen({ kind: "editor" }); setView(dest); }
+      else platform.pickPdfs(false).then((p) => { if (p.length) openFiles(p).then(() => setView(dest)); });
       return;
     }
     setDropped(null);
@@ -508,6 +551,7 @@ export default function App() {
     { id: "redo", title: "Redo", shortcut: "Ctrl+Y", enabled: history.canRedo, run: history.redo },
     { id: "read", title: "Reading view", shortcut: "Ctrl+1", keywords: "view", enabled: hasDoc, run: () => setView("read") },
     { id: "organize", title: "Organize pages view", shortcut: "Ctrl+2", keywords: "reorder grid arrange", enabled: hasDoc, run: () => setView("organize") },
+    { id: "edit", title: "Edit & annotate view", shortcut: "Ctrl+3", keywords: "annotate draw text sign redact highlight shape form fill", enabled: hasDoc, run: () => setView("edit") },
     { id: "find", title: "Find text…", shortcut: "Ctrl+F", keywords: "search", enabled: hasDoc, run: () => setFindOpen(true) },
     { id: "goto", title: "Go to page…", shortcut: "Ctrl+G", keywords: "jump number", enabled: hasDoc, run: () => setDialog({ kind: "goto" }) },
     { id: "zin", title: "Zoom in", shortcut: "Ctrl++", enabled: hasDoc, run: () => zoomStep(1) },
@@ -567,6 +611,7 @@ export default function App() {
       if (ctrl && k === "0") return run("zfit");
       if (ctrl && k === "1") return run("read");
       if (ctrl && k === "2") return run("organize");
+      if (ctrl && k === "3") return run("edit");
       if (typing) return;
       if (ctrl && k === "z" && !e.shiftKey) return run("undo");
       if (ctrl && (k === "y" || (k === "z" && e.shiftKey))) return run("redo");
@@ -758,6 +803,9 @@ export default function App() {
               <button className={view === "organize" ? "on" : ""} onClick={() => setView("organize")} title="Organize pages (Ctrl+2)">
                 <Icon name="grid" /><span>Organize</span>
               </button>
+              <button className={view === "edit" ? "on" : ""} onClick={() => setView("edit")} title="Edit &amp; annotate (Ctrl+3)">
+                <Icon name="pen" /><span>Edit</span>
+              </button>
             </div>
             <div className="tool-group">
               <button onClick={() => rotate(targetKeys(), -90)} title="Rotate left (Ctrl+L)" className="icon-only"><Icon name="rotate-left" /></button>
@@ -821,6 +869,22 @@ export default function App() {
             jumpSignal={jumpSignal}
             showThumbs={showThumbs}
             highlights={findHitSet}
+          />
+        ) : view === "edit" ? (
+          <Annotate
+            pages={doc.pages}
+            sources={sources}
+            current={Math.min(current, pageCount - 1)}
+            onCurrent={setCurrent}
+            annos={doc.annos}
+            commitAnnos={commitAnnos}
+            images={images}
+            addImage={addImage}
+            formFields={formInfo?.fields ?? []}
+            formValues={doc.form}
+            setFormValue={setFormValue}
+            formSourceId={formInfo && doc.pages.length ? doc.pages[0].sourceId : null}
+            toast={toast}
           />
         ) : (
           <Organizer

@@ -102,3 +102,28 @@ export async function pageText(source: Source, index: number): Promise<string> {
   const content = await page.getTextContent();
   return content.items.map((i) => ("str" in i ? i.str : "")).join(" ");
 }
+
+/** Renders a page to a PNG data URL for use as a static <img> (editor view). */
+export async function renderPageDataUrl(source: Source, index: number, extraRotation: number, cssWidth: number): Promise<{ url: string; w: number; h: number }> {
+  const page = await getPage(source, index);
+  const rotation = (page.rotate + extraRotation + 360) % 360;
+  const base = page.getViewport({ scale: 1, rotation });
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let scale = (cssWidth / base.width) * dpr;
+  let vp = page.getViewport({ scale, rotation });
+  const limit = 24_000_000;
+  if (vp.width * vp.height > limit) {
+    scale *= Math.sqrt(limit / (vp.width * vp.height));
+    vp = page.getViewport({ scale, rotation });
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.floor(vp.width);
+  canvas.height = Math.floor(vp.height);
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvas, viewport: vp }).promise;
+  const url = canvas.toDataURL("image/png");
+  canvas.width = canvas.height = 0;
+  return { url, w: base.width, h: base.height };
+}
